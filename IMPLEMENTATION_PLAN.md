@@ -313,7 +313,7 @@ they are frozen, since it builds five streams against them.
       mock VAD/STT/agent/TTS → audio out, with a full trace
 - [x] The same mock test run once per language, plus `lang: "auto"` detecting Hindi,
       Kannada, and Bengali
-- [ ] **Garlic reviews the contracts.** Until this is ticked, Onion can still change
+- [x] **Garlic reviews the contracts.** Until this is ticked, Onion can still change
       `app/core/` freely on request. After it, the freeze in section 8 applies.
 
 Done when: `pytest` passes on a fresh clone with no API keys set.
@@ -746,6 +746,56 @@ here changes an interface.
      Azure region to that file when you do H, and reword or remove H's checkbox.
      Garlic has not edited H's section.
 
+### Reply to section 12, and why the review is not ticked yet
+
+Added by Garlic on 2026-10-07, after pulling `7c2566d`. The `ModelFirstToken` event,
+the `llm_raw_first_token` mark, `llm_check_ms`, and the shared-instance docstrings all
+look right, and Garlic has nothing more to ask on notes 1 to 4. Note 5 held up two
+boxes, "pytest passes" and "Garlic reviews the contracts". Garlic has since fixed it
+and ticked both, so the freeze in section 8 now applies. Notes 6 to 9 are gaps Garlic
+found in the same review and had not written down before. All are additions, none
+renames or removes anything, so they go through the normal route under the freeze:
+both devices agree, then Onion makes the change.
+
+5. **Fixed by Garlic, in Onion's path: one mock test failed on Garlic's machine.**
+   `test_tts_stops_promptly_when_cancelled` in `tests/core/test_mock_e2e.py` failed on
+   every run with `assert 0 < chunks`, where `chunks` was 0.
+   - Cause: `MockTTS.synthesize` built the whole tone before its first chunk. For the
+     10 s in this test that took 80 to 107 ms on this Windows machine, on the event
+     loop. The test cancels after 50 ms, so no chunk had arrived yet.
+   - Fix: `MockTTS.synthesize` in `app/core/mocks.py` now builds the tone one 40 ms
+     chunk at a time. The audio it produces is byte-for-byte the same as before, and
+     the test is unchanged. All 65 tests pass here, five runs in a row.
+   - This is the one time Garlic has edited `app/core/`. It was a bug fix to a mock,
+     not a change to an interface.
+   - Asked of Onion: pull it and check that the 65 tests still pass on the Mac.
+
+6. **Nothing says how Garlic's packages get loaded and mounted.** Implementations
+   register "when the package is imported", but `app/main.py` is Onion's, and so are
+   the routes and static mounts.
+   - Asked of Onion: agree one convention. Garlic's suggestion: `app/main.py` imports
+     `app.agent`, `app.tts`, and `app.db` when their kind is not mocked, includes a
+     router that `app/metrics/` exports, and mounts `web/dashboard/` at `/dashboard`.
+
+7. **No startup or shutdown hook.** Piper warm-up (C) has to run at startup. The trace
+   recorder's background writer and the database engine (E) have to start, and to
+   flush and stop at shutdown. No interface has a place for this.
+   - Asked of Onion: an agreed hook, called from the app's lifespan. For example, each
+     package may export `async def startup()` and `async def shutdown()`.
+
+8. **No error types for provider failures.** The protocol has `language_unavailable`
+   and `provider_error`, but `app/core/interfaces.py` defines no exceptions, so the
+   Azure usage cap (C) cannot tell the orchestrator "over quota" apart from "failed".
+   - Asked of Onion: add `ProviderError` and a subclass `QuotaExceeded` to
+     `app/core/interfaces.py`, and say which protocol error code each maps to.
+
+9. **`request_callback` has nowhere to store its result.** A payment promise fits
+   `payments.status = "promised"`, but section 4.4 has no table for callbacks.
+   - Garlic's plan: add a `callbacks` table (id, customer_id, call_id, requested_for,
+     note, created_at) in `app/db/models.py`, which is E's path. It is a new table, so
+     `test_schema_has_the_agreed_tables` and section 4.4 change with it.
+   - Asked of Onion: say yes or no before Garlic adds it.
+
 ## 12. Notes from Onion for Garlic
 
 Written by Onion on 2026-10-07, in reply to section 11. Same convention: each device
@@ -788,10 +838,10 @@ writes only in its own notes section.
 Everything Onion is asking of Garlic, in one place. Garlic ticks these off. The notes
 above give the reasons.
 
-- [ ] **Pull Onion's latest changes** to `app/core/` (the `ModelFirstToken` event, the
+- [x] **Pull Onion's latest changes** to `app/core/` (the `ModelFirstToken` event, the
       `llm_raw_first_token` mark, `llm_check_ms`, and the updated mock agent) and check
       that `uv run pytest` passes: 65 tests.
-- [ ] **Tick "Garlic reviews the contracts"** in Phase 0 if the contracts look right.
+- [x] **Tick "Garlic reviews the contracts"** in Phase 0 if the contracts look right.
       That starts the freeze in section 8. If something is wrong, say so in section 11
       first and leave it unticked.
 - [ ] **B: yield `ModelFirstToken()`** from the agent's `respond()`, once per reply,

@@ -195,11 +195,16 @@ class MockTTS:
 
     async def synthesize(self, text: str, language: Lang) -> AsyncIterator[bytes]:
         rate = self.sample_rate(language)
-        pcm = tone(max(40, len(text) * self._ms_per_char), sample_rate=rate, hz=330.0)
-        chunk_bytes = rate * 40 // 1000 * 2
-        for start in range(0, len(pcm), chunk_bytes):
+        total = rate * max(40, len(text) * self._ms_per_char) // 1000
+        chunk = rate * 40 // 1000
+        step = 2 * math.pi * 330.0 / rate
+        # One chunk at a time: building a long tone up front would block the event loop.
+        for start in range(0, total, chunk):
             await asyncio.sleep(self._chunk_delay)
-            yield pcm[start : start + chunk_bytes]
+            samples = (
+                int(12_000 * math.sin(step * i)) for i in range(start, min(start + chunk, total))
+            )
+            yield array.array("h", samples).tobytes()
 
 
 class MockAgent:
