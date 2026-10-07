@@ -19,6 +19,8 @@ class Base(DeclarativeBase):
 
 class Customer(Base):
     __tablename__ = "customers"
+    # verify_identity finds the caller by this pair, so it must identify one customer.
+    __table_args__ = (UniqueConstraint("phone_last4", "dob"),)
 
     id: Mapped[int] = mapped_column(primary_key=True)
     name: Mapped[str] = mapped_column(String(120))

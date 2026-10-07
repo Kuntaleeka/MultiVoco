@@ -3,6 +3,7 @@ from decimal import Decimal
 
 import pytest
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from sqlalchemy.orm import selectinload
 
@@ -52,6 +53,19 @@ async def test_loan_data_round_trips(session):
     assert stored.outstanding == Decimal("181250.50")
     assert stored.payments[0].status == "paid"
     assert (await session.get(Customer, stored.customer_id)).name == "ಅನಿತಾ ರಾವ್"
+
+
+async def test_phone_last4_and_dob_identify_one_customer(session):
+    session.add(Customer(name="Asha Rao", phone_last4="4821", dob=date(1990, 4, 12), language="en"))
+    await session.commit()
+
+    session.add(Customer(name="Ravi Rao", phone_last4="4821", dob=date(1990, 4, 12), language="hi"))
+    with pytest.raises(IntegrityError):
+        await session.commit()
+    await session.rollback()
+
+    session.add(Customer(name="Ravi Rao", phone_last4="4821", dob=date(1991, 4, 12), language="hi"))
+    await session.commit()
 
 
 async def test_call_with_turn_trace_round_trips(session):
