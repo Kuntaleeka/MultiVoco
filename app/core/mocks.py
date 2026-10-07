@@ -7,6 +7,7 @@ silence", which the energy-based MockVAD can segment.
 import array
 import asyncio
 import math
+import re
 from collections.abc import AsyncIterator
 
 from app.core.interfaces import (
@@ -18,6 +19,7 @@ from app.core.interfaces import (
     LangGuess,
     LLMEvent,
     Message,
+    ModelFirstToken,
     TextDelta,
     ToolCall,
     ToolSpec,
@@ -201,7 +203,7 @@ class MockTTS:
 
 
 class MockAgent:
-    """Replies with the canned line for ctx.language and keeps what was actually heard."""
+    """Replies with the canned lines for ctx.language and keeps what was actually heard."""
 
     def __init__(self, ctx: CallContext | None = None) -> None:
         self.history: list[Message] = []
@@ -211,9 +213,11 @@ class MockAgent:
 
     async def respond(self, user_text: str, ctx: CallContext) -> AsyncIterator[AgentEvent]:
         self.history.append(Message("user", user_text))
-        for word in AGENT_REPLIES[ctx.language].split(" "):
+        yield ModelFirstToken()
+        # A sentence at a time, like the real agent, which holds each one for a check.
+        for sentence in re.split(r"(?<=[.?!\u0964])\s+", AGENT_REPLIES[ctx.language]):
             await asyncio.sleep(0)
-            yield TextDelta(word + " ")
+            yield TextDelta(sentence + " ")
         yield Done("stop")
 
     def commit_spoken(self, spoken_text: str, interrupted: bool) -> None:

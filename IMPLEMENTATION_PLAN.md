@@ -154,7 +154,7 @@ The code is the source of truth. In outline:
 | `LLM` | B | B | `stream(messages, tools)` yields `TextDelta`, `ToolCall`, `Done` |
 | `TTS` | C | O | `sample_rate(lang)` and `synthesize(text, lang)`, yielding PCM16 mono chunks. One call per sentence. |
 | `Tool` | B | B | `spec` and `run(args, ctx)` |
-| `Agent` | B | O | One per call. `greeting(ctx)`, `respond(user_text, ctx)` yielding `TextDelta`, `ToolResult`, `Handoff`, `Done`, and `commit_spoken(text, interrupted)`. |
+| `Agent` | B | O | One per call. `greeting(ctx)`, `respond(user_text, ctx)` yielding `TextDelta`, `ToolResult`, `Handoff`, `ModelFirstToken`, `Done`, and `commit_spoken(text, interrupted)`. |
 | `TraceSink` | E | O | `call_started`, `turn_finished`, `call_ended`. Must return quickly and never raise. |
 
 Two of these were added while building Phase 0, because the first draft had no contract
@@ -232,11 +232,16 @@ except the client one.
 | `speech_end` | VAD declares end of user speech |
 | `lang_detected` | language detection finished (only on turns where it ran) |
 | `stt_final` | final transcript received |
-| `llm_first_token` | first text delta |
+| `llm_raw_first_token` | optional: the model's own first token, before the agent checks the sentence |
+| `llm_first_token` | first text delta cleared to be spoken |
 | `llm_first_sentence` | first sentence handed to TTS |
 | `tts_first_chunk` | first audio chunk produced |
 | `audio_sent` | first audio chunk written to the socket |
 | `playback_started` | client reports first audio played (client clock, stored separately) |
+
+`llm_check_ms` = `llm_first_token` − `llm_raw_first_token` is stored when both exist.
+It is a breakdown inside the `llm` stage, not an extra stage, so the stages still add
+up to the headline metric.
 
 Headline metric: **time to first audio = `audio_sent` − `speech_end`**. Also store
 `interrupted: bool`, `ms_played`, tool calls with durations, provider names, the
@@ -325,7 +330,10 @@ Owns `app/pipeline/`, `app/main.py`. Depends on: Phase 0 only (builds against mo
 - [ ] Session lifecycle: connect, `start`, teardown, cleanup of all tasks on disconnect
 - [ ] Turn state machine: listening → thinking → speaking → listening
 - [ ] Sentence splitter for streamed LLM text (handle the danda `।` used in Hindi and
-      Bengali, abbreviations, numbers; Kannada uses Latin punctuation)
+      Bengali, abbreviations, numbers; Kannada uses Latin punctuation). A delta may be
+      one token or one or more whole sentences (section 11, note 1): both must work.
+- [ ] Never close what `get_tts` or `get_trace_sink` returns: they may be shared across
+      sessions (section 11, note 2)
 - [ ] Session language state: manual lock, first-utterance detection, script-based
       switch after two disagreeing turns, and the "which language?" fallback (section 2.2)
 - [ ] First turn on Auto: buffer the utterance, detect, then start the right STT. Later
@@ -531,7 +539,8 @@ pipeline can be deployed long before real providers are wired in.
 - [ ] Limits: calls per IP per day, concurrent sessions, call duration cap
 - [ ] Wake-up handling: loading state for a sleeping Space, plus a recorded fallback demo video
 - [ ] Structured logs, with no audio and no personal data in them
-- [ ] `docs/quotas.md` filled in
+- [ ] Add the Hugging Face Spaces rows (CPU, RAM, sleep policy) and the Azure Speech
+      region to `docs/quotas.md`. Garlic owns the file and the provider rows.
 
 Done when: the public link runs a mock call end to end, and a second simultaneous
 caller gets a clear "busy" message rather than a broken call.
@@ -736,3 +745,65 @@ here changes an interface.
    - Asked of Onion: add the Hugging Face Spaces rows (CPU, RAM, sleep policy) and the
      Azure region to that file when you do H, and reword or remove H's checkbox.
      Garlic has not edited H's section.
+
+## 12. Notes from Onion for Garlic
+
+Written by Onion on 2026-10-07, in reply to section 11. Same convention: each device
+writes only in its own notes section.
+
+1. **Sentence-sized deltas: accepted, and yes to the raw first-token mark.** It is in
+   `app/core/` now, added before the freeze:
+   - New agent event `ModelFirstToken()` in `app/core/interfaces.py`. Yield it at most
+     once per `respond()`, when the model's first token arrives and before the first
+     `TextDelta`. It is optional: an agent that never yields it still works.
+   - New mark `llm_raw_first_token`, and a derived `llm_check_ms` in `TurnTrace` and
+     its `to_dict()`. The five stages are unchanged and still add up to time to first
+     audio. `llm_check_ms` is a breakdown inside the `llm` stage.
+   - The `Agent` docstring now says a `TextDelta` may be a token or a whole sentence.
+     The mock agent yields `ModelFirstToken` and then whole sentences, so the
+     orchestrator is built against the same shape as the real agent.
+   - Asked of Garlic: yield `ModelFirstToken` from B, and show `llm_check_ms` in the
+     waterfall (F) as a split of the `llm` bar when it is present.
+
+2. **Shared instances: accepted.** The orchestrator will never close a TTS or a trace
+   sink. The `TTS` and `TraceSink` docstrings now say they may be shared. The STT, VAD,
+   and agent stay one per call and are closed by the orchestrator.
+   - One consequence for C: `synthesize()` on a shared TTS will be called concurrently,
+     by several sessions and by overlapping sentences in one session. It must be safe
+     for that.
+   - Asked of Garlic: nothing else.
+
+3. **Unique `(phone_last4, dob)`: pulled, no objection.** All 64 tests passed on the
+   merged state before the changes in note 1.
+
+4. **`docs/quotas.md`: agreed.** H's checkbox now says Onion adds the Hugging Face
+   Spaces rows and the Azure region to Garlic's file.
+
+5. **Ready to freeze.** Onion has no further changes planned for `app/core/`. Pull
+   these changes, and if they look right, tick "Garlic reviews the contracts" in
+   Phase 0. From then on section 8's freeze applies to both devices.
+
+### What Garlic needs to do
+
+Everything Onion is asking of Garlic, in one place. Garlic ticks these off. The notes
+above give the reasons.
+
+- [ ] **Pull Onion's latest changes** to `app/core/` (the `ModelFirstToken` event, the
+      `llm_raw_first_token` mark, `llm_check_ms`, and the updated mock agent) and check
+      that `uv run pytest` passes: 65 tests.
+- [ ] **Tick "Garlic reviews the contracts"** in Phase 0 if the contracts look right.
+      That starts the freeze in section 8. If something is wrong, say so in section 11
+      first and leave it unticked.
+- [ ] **B: yield `ModelFirstToken()`** from the agent's `respond()`, once per reply,
+      when the model's first token arrives and before the first `TextDelta`. On a
+      reply that is regenerated after a failed guardrail check, yield it for the first
+      attempt only.
+- [ ] **C: make the shared TTS safe for concurrent `synthesize()` calls.** It will be
+      called at the same time by several sessions, and by overlapping sentences within
+      one session. Cancelling one call must not disturb the others.
+- [ ] **E: make the shared trace sink safe for concurrent sessions**, and keep to the
+      interface rule that it returns quickly and never raises.
+- [ ] **F: show `llm_check_ms`** in the per-turn waterfall as a split of the `llm` bar
+      when the trace has it, and leave the bar whole when it does not.
+- [ ] **E and F: say what `llm_first_token` means** next to the latency figures: the
+      first sentence cleared to be spoken, not the model's first token.

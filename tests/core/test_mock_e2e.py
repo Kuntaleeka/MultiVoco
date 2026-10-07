@@ -10,7 +10,14 @@ from datetime import UTC, datetime
 import pytest
 
 from app.core import registry
-from app.core.interfaces import CallContext, Done, LangGuess, TextDelta, VADEventKind
+from app.core.interfaces import (
+    CallContext,
+    Done,
+    LangGuess,
+    ModelFirstToken,
+    TextDelta,
+    VADEventKind,
+)
 from app.core.languages import AUTO, LANGUAGES, Lang, dominant_script
 from app.core.mocks import (
     AGENT_REPLIES,
@@ -91,13 +98,18 @@ async def run_turn(requested: str, detected: Lang = Lang.EN):
     reply = ""
     audio = bytearray()
     finished = False
+    deltas = 0
     async for event in agent.respond(trace.user_text, ctx):
-        if isinstance(event, TextDelta):
+        if isinstance(event, ModelFirstToken):
+            trace.mark(Mark.LLM_RAW_FIRST_TOKEN, clock.now_ms())
+        elif isinstance(event, TextDelta):
             trace.mark(Mark.LLM_FIRST_TOKEN, clock.now_ms())
             reply += event.text
+            deltas += 1
         elif isinstance(event, Done):
             finished = True
     assert finished
+    assert deltas == 2  # the mock agent yields whole sentences, as the real one does
     trace.mark(Mark.LLM_FIRST_SENTENCE, clock.now_ms())
     async for chunk in tts.synthesize(reply.strip(), lang):
         trace.mark(Mark.TTS_FIRST_CHUNK, clock.now_ms())
@@ -128,6 +140,8 @@ def check_turn(trace, transcripts, audio, sample_rate, sink, lang):
     assert None not in times
     assert times == sorted(times)
     assert trace.time_to_first_audio_ms >= 0
+    assert trace.get(Mark.STT_FINAL) <= trace.get(Mark.LLM_RAW_FIRST_TOKEN)
+    assert trace.llm_check_ms >= 0
     assert set(trace.stage_durations()) == {"stt", "llm", "sentence", "tts", "send"}
 
     assert sink.turns == [trace]

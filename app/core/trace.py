@@ -13,7 +13,9 @@ class Mark(StrEnum):
     SPEECH_END = "speech_end"  # VAD declares end of user speech
     LANG_DETECTED = "lang_detected"  # only on turns where detection ran
     STT_FINAL = "stt_final"  # final transcript received
-    LLM_FIRST_TOKEN = "llm_first_token"  # first text delta
+    # Optional: the model's own first token, before any guardrail check on the sentence.
+    LLM_RAW_FIRST_TOKEN = "llm_raw_first_token"
+    LLM_FIRST_TOKEN = "llm_first_token"  # first text delta cleared to be spoken
     LLM_FIRST_SENTENCE = "llm_first_sentence"  # first sentence handed to TTS
     TTS_FIRST_CHUNK = "tts_first_chunk"  # first audio chunk produced
     AUDIO_SENT = "audio_sent"  # first audio chunk written to the socket
@@ -79,6 +81,14 @@ class TurnTrace:
             return None
         return end - start
 
+    @property
+    def llm_check_ms(self) -> float | None:
+        """Part of the "llm" stage spent after the model's first token, checking the text."""
+        raw, cleared = self.get(Mark.LLM_RAW_FIRST_TOKEN), self.get(Mark.LLM_FIRST_TOKEN)
+        if raw is None or cleared is None:
+            return None
+        return cleared - raw
+
     def stage_durations(self) -> dict[str, float]:
         durations: dict[str, float] = {}
         for stage, (lo, hi) in STAGES.items():
@@ -92,6 +102,7 @@ class TurnTrace:
         data["language"] = self.language.value
         data["time_to_first_audio_ms"] = self.time_to_first_audio_ms
         data["stages"] = self.stage_durations()
+        data["llm_check_ms"] = self.llm_check_ms
         return data
 
 

@@ -140,6 +140,8 @@ class LLM(Protocol):
 
 @runtime_checkable
 class TTS(Protocol):
+    """May be one shared instance per process. Callers must not close or tear it down."""
+
     languages: set[Lang]
 
     def sample_rate(self, language: Lang) -> int: ...
@@ -185,7 +187,16 @@ class Handoff:
     reason: str
 
 
-AgentEvent = TextDelta | ToolResult | Handoff | Done
+@dataclass(frozen=True)
+class ModelFirstToken:
+    """The model produced its first token for this reply. Carries no text.
+
+    Optional, at most once per respond(), before the first TextDelta. It lets the trace
+    separate model latency from the time the agent spends checking a sentence.
+    """
+
+
+AgentEvent = TextDelta | ToolResult | Handoff | ModelFirstToken | Done
 
 
 @runtime_checkable
@@ -195,6 +206,10 @@ class Agent(Protocol):
     The orchestrator never talks to the LLM directly. It calls respond() once per user
     turn and speaks the TextDelta stream. Replies must be in ctx.language, which the
     orchestrator may change between turns.
+
+    A TextDelta is text that is cleared to be spoken and cannot be taken back. Its size
+    is up to the agent: it may be a token, or a whole sentence that was held until a
+    guardrail passed it. Callers must not assume either.
     """
 
     def greeting(self, ctx: CallContext) -> str:
@@ -221,6 +236,8 @@ class TraceSink(Protocol):
 
     Implementations must return quickly and never raise: a database outage must not
     break a live call. Queue the write and do it in the background.
+
+    May be one shared instance per process. Callers must not close or tear it down.
     """
 
     async def call_started(self, call: CallRecord) -> None: ...

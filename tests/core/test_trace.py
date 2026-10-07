@@ -29,6 +29,16 @@ def test_stages_add_up_to_time_to_first_audio():
     assert sum(stages.values()) == trace.time_to_first_audio_ms
 
 
+def test_raw_first_token_splits_out_the_check_time_without_changing_the_stages():
+    trace = make_trace()
+    assert trace.llm_check_ms is None
+    trace.mark(Mark.LLM_RAW_FIRST_TOKEN, 1320.0)
+    assert trace.llm_check_ms == 80.0
+    assert trace.stage_durations()["llm"] == 250.0
+    assert sum(trace.stage_durations().values()) == trace.time_to_first_audio_ms
+    assert trace.to_dict()["llm_check_ms"] == 80.0
+
+
 def test_first_mark_wins():
     trace = make_trace()
     trace.mark(Mark.AUDIO_SENT, 9999.0)
