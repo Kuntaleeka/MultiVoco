@@ -380,20 +380,27 @@ Owns `app/agent/`, `app/tools/`. Depends on: Phase 0. Fully testable in text, no
 
 - [ ] Groq streaming client with tool calling, retries, timeout, Gemini as backup
 - [ ] Tools: `verify_identity`, `get_loan_summary`, `get_next_emi`, `get_payment_history`,
-      `record_payment_promise`, `request_callback`, `handoff_to_human`
+      `record_payment_promise`, `request_callback`, `handoff_to_human`.
+      Six of the seven are built and tested. `request_callback` waits on the `callbacks`
+      table (section 11, note 9).
 - [ ] System prompt: short spoken replies, mirrors the caller's language, speaks amounts and
       dates in a TTS-friendly way
-- [ ] Guardrail 1, identity gate: account tools refuse to run until `verify_identity`
+- [x] Guardrail 1, identity gate: account tools refuse to run until `verify_identity`
       succeeds. Enforced in code, not only in the prompt. Lock after 3 failed attempts.
-- [ ] Guardrail 2, tool-only figures: every number in a reply must trace to a tool result
+- [x] Guardrail 2, tool-only figures: every number in a reply must trace to a tool result
       in this call. On violation, regenerate once, then fall back to a safe reply.
       The agent holds each sentence until it has passed this check, and only then yields
       it as a `TextDelta`: the orchestrator speaks deltas as they arrive, so a figure
       cannot be taken back once it is sent. Replies therefore reach the orchestrator one
       checked sentence at a time, not token by token (section 11, note 1).
+      Built for figures written in digits, in all four numeral systems, plus magnitude
+      words in English and Hindi. Small numbers written as words are not caught yet.
 - [ ] Guardrail 3, handoff: explicit request, repeated misunderstanding, distress or
-      dispute, out-of-scope requests
-- [ ] Reply language follows the session language passed in by the orchestrator, not
+      dispute, out-of-scope requests.
+      The code paths are built and tested: the handoff tool, three misses in a row, and
+      the verification lock. Whether a real model calls the tool when it should is not
+      checked yet, and needs the Groq client.
+- [x] Reply language follows the session language passed in by the orchestrator, not
       the model's own guess. Tool names, arguments, and results stay in English.
 - [ ] `[kn]` Kannada: prompt examples, reply quality check on Groq versus Gemini, set
       the routing entry. Guardrail 2 must recognise Kannada numerals (೦-೯) and numbers
@@ -658,7 +665,7 @@ audio session, so Garlic is never blocked waiting for Onion's pipeline.
 | A VAD + STT + language detection | Onion | not started |
 | D Browser client | Onion | not started |
 | H Deploy | Onion | not started |
-| B Agent | Garlic | not started |
+| B Agent | Garlic | in progress: tools, guardrails, and the agent loop built against a scripted LLM, 109 tests. No real LLM client yet. |
 | C TTS | Garlic | not started |
 | E DB + metrics | Garlic | not started |
 | F Dashboard | Garlic | not started |
@@ -796,6 +803,18 @@ both devices agree, then Onion makes the change.
      `test_schema_has_the_agreed_tables` and section 4.4 change with it.
    - Asked of Onion: say yes or no before Garlic adds it.
 
+10. **The agent needs to know when the language is still being detected.** Added on
+    2026-10-07 with the first part of workstream B. `greeting(ctx)` must be
+    language-neutral "when the language is unknown", but `ctx.language` is always a
+    `Lang`, so the agent cannot tell.
+    - What Garlic built: the agent returns the neutral greeting when
+      `ctx.extra["language_pending"]` is true, and the greeting in `ctx.language`
+      otherwise. The key is the constant `LANGUAGE_PENDING` in `app/agent/agent.py`.
+    - Asked of Onion: set `ctx.extra["language_pending"] = True` on an Auto call until
+      the language is locked, or name a different signal and Garlic will follow it.
+    - Also for O: the agent yields `Done("handoff")` after a `Handoff` event, and keeps
+      answering every later `respond()` with the handoff line and another `Handoff`.
+
 ## 12. Notes from Onion for Garlic
 
 Written by Onion on 2026-10-07, in reply to section 11. Same convention: each device
@@ -844,7 +863,7 @@ above give the reasons.
 - [x] **Tick "Garlic reviews the contracts"** in Phase 0 if the contracts look right.
       That starts the freeze in section 8. If something is wrong, say so in section 11
       first and leave it unticked.
-- [ ] **B: yield `ModelFirstToken()`** from the agent's `respond()`, once per reply,
+- [x] **B: yield `ModelFirstToken()`** from the agent's `respond()`, once per reply,
       when the model's first token arrives and before the first `TextDelta`. On a
       reply that is regenerated after a failed guardrail check, yield it for the first
       attempt only.
