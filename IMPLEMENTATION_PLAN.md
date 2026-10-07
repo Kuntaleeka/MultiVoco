@@ -379,6 +379,10 @@ Owns `app/agent/`, `app/tools/`. Depends on: Phase 0. Fully testable in text, no
       succeeds. Enforced in code, not only in the prompt. Lock after 3 failed attempts.
 - [ ] Guardrail 2, tool-only figures: every number in a reply must trace to a tool result
       in this call. On violation, regenerate once, then fall back to a safe reply.
+      The agent holds each sentence until it has passed this check, and only then yields
+      it as a `TextDelta`: the orchestrator speaks deltas as they arrive, so a figure
+      cannot be taken back once it is sent. Replies therefore reach the orchestrator one
+      checked sentence at a time, not token by token (section 11, note 1).
 - [ ] Guardrail 3, handoff: explicit request, repeated misunderstanding, distress or
       dispute, out-of-scope requests
 - [ ] Reply language follows the session language passed in by the orchestrator, not
@@ -388,7 +392,8 @@ Owns `app/agent/`, `app/tools/`. Depends on: Phase 0. Fully testable in text, no
       written out as Kannada words.
 - [ ] `[bn]` Bengali: the same, with Bengali numerals (০-৯) and number words
 - [ ] Identity verification works when the caller reads digits or a date of birth in
-      any of the four languages
+      any of the four languages. `verify_identity` finds the customer by `phone_last4`
+      plus `dob`, the only identifying fields a caller can say (section 11, note 3).
 - [ ] `scripts/chat.py`: text REPL against the agent, with `--lang` (workstream G uses this)
 
 Done when: unit tests cover each guardrail in every language, including attempts to
@@ -402,6 +407,9 @@ Owns `app/tts/`. Depends on: Phase 0.
 - [ ] Voice selection for English and Hindi, with the model download handled at build time
 - [ ] Text normalisation: rupee amounts, dates, loan IDs, digits read one at a time
 - [ ] Warm-up at startup so the first turn is not slow
+- [ ] Loaded Piper voices and the Azure client are cached once per process inside
+      `app/tts/`. The registered factory only hands out the cached instance, because
+      the registry runs the factory on every `get_tts` call (section 11, note 2).
 - [ ] `[kn]` Azure Speech client with streaming output and cancellation, Kannada voice
       chosen with a native speaker. **Start this straight after the Piper baseline**:
       it is the only TTS route for Kannada.
@@ -443,8 +451,15 @@ Owns `app/db/`, `app/metrics/`, `scripts/seed.py`. Depends on: Phase 0.
 
 - [ ] Async engine, SQLite locally and Neon in production, migrations with Alembic
 - [ ] Seed script: about 20 synthetic customers with varied loan states, spread across
-      the four languages
-- [ ] Trace recorder: writes turns and tool calls off the hot path (queue + background writer)
+      the four languages. Each customer has a different `phone_last4` + `dob` pair.
+- [x] `customers` has a unique constraint on (`phone_last4`, `dob`), with a test
+      (section 11, note 3)
+- [ ] Trace recorder: writes turns and tool calls off the hot path (queue + background
+      writer). One recorder per process: the registered factory returns the same
+      instance on every `get_trace_sink` call (section 11, note 2).
+- [ ] `docs/quotas.md`: Garlic owns the file and fills in the provider rows (Deepgram,
+      Groq, Whisper, Gemini, Piper, Azure Speech), each with the date checked
+      (section 11, note 4)
 - [ ] `GET /api/calls`, `GET /api/calls/{id}` (transcript plus per-turn waterfall)
 - [ ] `GET /api/metrics/latency` (p50/p95 per stage and for time-to-first-audio,
       filterable by date, provider, and language)
@@ -675,3 +690,49 @@ stages in section 7 map onto these one to one.
 | Latency looks bad from a far region | Report the server and provider regions next to every figure |
 | Model invents loan figures | Guardrail 2 is enforced in code and covered by adversarial evals |
 | Contract churn breaks parallel work | Phase 0 freeze, additive changes only |
+
+## 11. Notes from Garlic for Onion
+
+Written by Garlic on 2026-10-07, from the contract review. Each note says what Garlic
+has decided inside its own streams, and what, if anything, it asks of Onion. Nothing
+here changes an interface.
+
+1. **Agent text arrives a sentence at a time.** Guardrail 2 has to check every figure
+   before it is spoken, and a `TextDelta` cannot be taken back once the orchestrator
+   has it. So the agent (B) holds each sentence until it passes, then yields it whole.
+   - For O: do not rely on token-sized deltas. A delta may be a full sentence, and the
+     sentence splitter must cope with that.
+   - For the trace: `llm_first_token` will be the time of the first checked sentence,
+     not the model's first token, so the `llm` stage includes the check and the
+     `sentence` stage will be close to zero. Section 4.3 still says "first text
+     delta", which stays true. Garlic will state this next to the latency figures in
+     the dashboard and the write-up.
+   - Asked of Onion: nothing, unless you want the model's raw first token as its own
+     mark. That would be an added `Mark`, and Garlic would report it through an added
+     event.
+
+2. **Garlic's factories return shared instances.** The registry runs the factory on
+   every `get_*` call. Piper voices (C) and the trace recorder (E) are costly to
+   build, so each is created once per process inside Garlic's packages, and the
+   factory hands out that one instance.
+   - For O: call `get_tts(lang)` and `get_trace_sink()` as often as is convenient, per
+     call or per turn. Do not close or tear down what they return at the end of a call:
+     other sessions are using the same object.
+   - The agent is the exception. `get_agent(ctx)` returns a new one per call, as the
+     interface says.
+   - Asked of Onion: nothing.
+
+3. **Callers are identified by `phone_last4` plus `dob`.** These are the only
+   identifying fields in `customers` that a caller can say aloud. Garlic added a unique
+   constraint on the pair in `app/db/models.py` (E's path), with a test, and the seed
+   script will give every customer a different pair.
+   - This is an added constraint: no column or table was renamed or removed, and the
+     table list in section 4.4 is unchanged.
+   - Asked of Onion: pull the change before the freeze, and say so if you object.
+
+4. **`docs/quotas.md` belongs to Garlic.** Phase 0 gives the provider and quota checks
+   to Garlic, but workstream H also lists "`docs/quotas.md` filled in". Garlic takes
+   the file and the provider rows, and has added the task to workstream E's list.
+   - Asked of Onion: add the Hugging Face Spaces rows (CPU, RAM, sleep policy) and the
+     Azure region to that file when you do H, and reword or remove H's checkbox.
+     Garlic has not edited H's section.
