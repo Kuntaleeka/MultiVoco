@@ -47,7 +47,7 @@ Around the agent, the parts that carry the project:
 | Database | Postgres on Neon (free tier). SQLite for local dev and tests | Same SQLAlchemy models for both |
 | Frontend | Plain JS, served as static files by FastAPI | One container, one public URL, no CORS |
 | Dashboard | Plain JS page reading the metrics API | Same static mount |
-| Hosting | Hugging Face Spaces (Docker) | |
+| Hosting | Render free web service, built from the Dockerfile | Changed on 2026-10-08: Hugging Face Docker Spaces now need a paid plan. 512 MB of memory, sleeps after 15 idle minutes. Details in `deploy/README.md` |
 | Python | 3.11 or newer (the repo pins 3.12), dependencies managed with `uv` | |
 
 Open items, to be checked by whoever takes the workstream (quotas change often):
@@ -61,9 +61,10 @@ Open items, to be checked by whoever takes the workstream (quotas change often):
 - Piper: which Hindi voice is acceptable for Hinglish output, its sample rate, and
   whether usable Kannada or Bengali voices exist
 - Azure Speech: free-tier character limit, Kannada (`kn-IN`) and Bengali (`bn-IN`)
-  voices, and streaming latency from the Space's region
+  voices, and streaming latency from the host's region (Render, Singapore)
 - Other Indic providers worth a comparison if the above fall short: Sarvam AI, AI4Bharat models
-- Hugging Face Spaces: CPU/RAM on the free tier and the sleep policy
+- Render: memory, CPU, monthly hours, and the sleep policy on the free plan. Whether
+  Silero and Piper fit in 512 MB together is the first thing to measure.
 
 Record the findings in `docs/quotas.md` with the date checked.
 
@@ -286,7 +287,8 @@ web/
   dashboard/     F                      latency dashboard
 evals/           G                      datasets, runners, reports
 scripts/         E (seed), H (others)
-deploy/          H                      Dockerfile, Space config, voice download
+deploy/          H                      deploy steps, voice download (Dockerfile and
+                                        render.yaml sit at the repo root)
 docs/            shared                 one file per topic, owner named at the top
 tests/           mirrors app/           each workstream owns its matching folder
 ```
@@ -327,29 +329,42 @@ other. Within a device, follow the order in section 7.
 
 Owns `app/pipeline/`, `app/main.py`. Depends on: Phase 0 only (builds against mocks).
 
-- [ ] Session lifecycle: connect, `start`, teardown, cleanup of all tasks on disconnect
-- [ ] Turn state machine: listening → thinking → speaking → listening
-- [ ] Sentence splitter for streamed LLM text (handle the danda `।` used in Hindi and
+- [x] Session lifecycle: connect, `start`, teardown, cleanup of all tasks on disconnect
+- [x] Turn state machine: listening → thinking → speaking → listening
+- [x] Sentence splitter for streamed LLM text (handle the danda `।` used in Hindi and
       Bengali, abbreviations, numbers; Kannada uses Latin punctuation). A delta may be
       one token or one or more whole sentences (section 11, note 1): both must work.
-- [ ] Never close what `get_tts` or `get_trace_sink` returns: they may be shared across
+- [x] Never close what `get_tts` or `get_trace_sink` returns: they may be shared across
       sessions (section 11, note 2)
-- [ ] Session language state: manual lock, first-utterance detection, script-based
+- [x] Session language state: manual lock, first-utterance detection, script-based
       switch after two disagreeing turns, and the "which language?" fallback (section 2.2)
-- [ ] First turn on Auto: buffer the utterance, detect, then start the right STT. Later
+- [x] First turn on Auto: buffer the utterance, detect, then start the right STT. Later
       turns stream straight to the session's STT.
-- [ ] Language switch mid-call: swap STT/LLM/TTS providers between turns, never during
+- [x] Language switch mid-call: swap STT/LLM/TTS providers between turns, never during
       one, and keep the conversation history
-- [ ] LLM → TTS → socket pipeline with bounded queues (backpressure)
-- [ ] Barge-in: on `SPEECH_START` while speaking, cancel LLM and TTS tasks, send `flush`,
+- [x] LLM → TTS → socket pipeline with bounded queues (backpressure)
+- [x] Barge-in: on `SPEECH_START` while speaking, cancel LLM and TTS tasks, send `flush`,
       wait for `playback_position`, truncate the agent message in history to what was heard
-- [ ] False-interrupt handling: ignore speech shorter than a threshold, and backchannels
-- [ ] Trace marks from 4.3 emitted at each stage
-- [ ] Per-session limits: max call length, max turns, idle timeout
+- [x] False-interrupt handling, part 1: speech shorter than 250 ms during a reply is ignored
+- [ ] False-interrupt handling, part 2: backchannels ("haan", "ok", "hmm") longer than
+      250 ms still interrupt. Telling them apart needs the transcript, which arrives
+      after the reply is already cancelled. To be designed during barge-in tuning
+      (stage 5), on real recordings.
+- [x] Trace marks from 4.3 emitted at each stage
+- [x] Per-session limits: max call length, max turns, idle timeout, concurrent sessions
+- [x] Package loading and lifecycle hooks (`app/pipeline/plugins.py`, section 12 note 6)
+- [ ] Pause-and-continue: an utterance that ends and resumes before the reply starts is
+      joined to the next one. Written, but not covered by a test, because the mock STT
+      answers instantly. Test it with the real STT in Phase 2 step 2.
 
 Done when: with mocks, an interrupt stops outgoing audio within 100 ms of the VAD event
 in tests, no task is left running after disconnect, every turn produces a full trace,
 and scripted tests cover detection, a mid-call switch, and the low-confidence fallback.
+
+Status: done on mocks, 63 tests in `tests/pipeline/`. One clarification on the
+"100 ms" figure: the server sends `flush` within a few milliseconds of deciding it is
+an interruption, but it decides only after 250 ms of speech, by design. Measured over a
+real socket with real-time frames, `flush` arrived 255 ms after the caller began speaking.
 
 ### A: Audio in (VAD + STT + language detection) (Onion)
 
@@ -437,15 +452,20 @@ Owns `app/tts/`. Depends on: Phase 0.
       Piper, network time to first chunk for Azure, in `docs/tts.md`
 
 Done when: first chunk for a 10-word sentence arrives fast enough for the latency
-target on Space-sized hardware in every language, and cancellation stops synthesis
+target on the host's hardware (Render free: shared CPU, 512 MB) in every language, and cancellation stops synthesis
 within one chunk on both providers.
 
 ### D: Browser client (Onion)
 
 Owns `web/client/`. Depends on: Phase 0 (works against the echo endpoint and mock pipeline).
 
-- [ ] AudioWorklet capture, resample to 16 kHz PCM16, 512-sample frames
-- [ ] Playback queue that handles the announced sample rate, with gapless scheduling
+Written, but **not yet run in a browser**. A box is ticked only where the code was
+checked some other way. Everything else needs a person with a microphone.
+
+- [x] AudioWorklet capture, resample to 16 kHz PCM16, 512-sample frames (resampler
+      checked in Node against a known signal)
+- [x] Playback queue that handles the announced sample rate, with gapless scheduling
+      (resampler checked in Node: chunked input gives the same output as one piece)
 - [ ] `flush` handling: stop audio immediately and report `playback_position`
 - [ ] `playback_started` reporting for the client-side latency mark
 - [ ] UI: call button, state indicator, live transcript, error and mic-permission states
@@ -459,6 +479,21 @@ Owns `web/client/`. Depends on: Phase 0 (works against the echo endpoint and moc
 
 Done when: a full call works against the mock pipeline, and the agent's own voice
 through laptop speakers does not trigger barge-in.
+
+Browser check, to tick the boxes above. Run `uv run uvicorn app.main:app` and open
+http://localhost:8000:
+
+1. Start a call with Auto. The greeting is a tone. The state pill goes Thinking,
+   Speaking, Listening.
+2. Say a sentence. Your line appears, then the agent's reply, with a second tone.
+3. Talk over the reply for a second. The tone stops at once, and the agent's line is
+   cut short and marked with a dash.
+4. Cough or tap the desk during a reply. It should carry on.
+5. Pick Kannada, then Bengali, mid-call. The badge changes and the next reply is in
+   that script, with no boxes in place of letters.
+6. Repeat step 3 on laptop speakers, without headphones. The agent's own tone must not
+   interrupt itself.
+7. Block the microphone and start a call. A message explains what to do.
 
 ### E: Persistence and metrics API (Garlic)
 
@@ -536,17 +571,24 @@ reproducible on another device.
 Owns `deploy/`, `Dockerfile`, non-seed `scripts/`. Depends on: Phase 0. The mock
 pipeline can be deployed long before real providers are wired in.
 
-- [ ] Dockerfile: slim image, Piper voices and Silero weights baked in at build time
-- [ ] Hugging Face Space configured, secrets set (including the Azure Speech key and
-      region), WebSocket confirmed working through the proxy
-- [ ] Azure Speech resource created in the region closest to the Space
+- [x] Dockerfile for the mock pipeline, `render.yaml`, and steps in `deploy/README.md`.
+      **Not built here: this machine has no Docker.** The first build on Render is the test.
+- [ ] Render service created from the Blueprint (needs a Render account connected to
+      the GitHub repository; steps in `deploy/README.md`). WebSocket confirmed working
+      through the proxy.
+- [ ] Dockerfile: Piper voices and Silero weights baked in at build time, on ONNX
+      Runtime with no PyTorch, and measured to fit in 512 MB
+- [ ] Secrets set in the Render dashboard (provider keys, the Azure Speech key and region)
+- [ ] Azure Speech resource created in the region closest to the host (Southeast Asia, for Singapore)
 - [ ] Daily usage caps for Azure characters and Whisper audio, with a clear message
       when a language is temporarily unavailable
 - [ ] Neon database created, migrations and seed applied
-- [ ] Limits: calls per IP per day, concurrent sessions, call duration cap
-- [ ] Wake-up handling: loading state for a sleeping Space, plus a recorded fallback demo video
+- [x] Limits: concurrent sessions and call duration cap (in the orchestrator)
+- [ ] Limits: calls per IP per day
+- [ ] Wake-up handling: a "waking up" state on the page while a sleeping service
+      starts (about a minute), plus a recorded fallback demo video
 - [ ] Structured logs, with no audio and no personal data in them
-- [ ] Add the Hugging Face Spaces rows (CPU, RAM, sleep policy) and the Azure Speech
+- [ ] Add the Render rows (CPU, memory, hours, sleep policy) and the Azure Speech
       region to `docs/quotas.md`. Garlic owns the file and the provider rows.
 
 Done when: the public link runs a mock call end to end, and a second simultaneous
@@ -568,7 +610,7 @@ to fix what breaks.
        **First Kannada call (milestone M2k).**
 6. [ ] Onion (O + A): auto-detection across English, Hindi, and Kannada, including a mid-call switch
 7. [ ] **Joint** (O + E): traces persisted. Garlic switches dashboard F from fixtures to the API.
-8. [ ] Onion (H): deploy the real pipeline. Measure latency from the Space, not from a laptop.
+8. [ ] Onion (H): deploy the real pipeline. Measure latency from the deployed service, not from a laptop.
 9. [ ] Garlic (G): full eval run against the deployed build, for English/Hindi and Kannada.
 10. [ ] **Joint**: Bengali route switched on, added to auto-detection, and evaluated.
         Steps 5, 6, and 9 repeated for `bn`.
@@ -605,7 +647,7 @@ Work order for each device, by stage:
 | Stage | Onion | Garlic | Ends with |
 |---|---|---|---|
 | 0 | Phase 0: skeleton, contracts, mocks | Quota checks, native speakers confirmed, eval scenarios written, recordings started. Review the contracts. | **M0** |
-| 1 | O: turn loop, barge-in, session limits. D: browser client. H: mock pipeline on the Space. | B: agent, tools, three guardrails, in text mode. C: Piper for English and Hindi. | **M1** (Onion alone) |
+| 1 | O: turn loop, barge-in, session limits. D: browser client. H: mock pipeline on Render. | B: agent, tools, three guardrails, in text mode. C: Piper for English and Hindi. | **M1** (Onion alone) |
 | 2 | A: Silero VAD, Deepgram, Groq Whisper for English/Hindi | Finish C. Start `[kn]` Azure client. | **M2** (joint: steps 3, 4) |
 | 3 | A `[kn]`: Kannada STT comparison and routing | C `[kn]`: Kannada voice and normalisation. B `[kn]`: prompts, numerals, LLM choice. | **M2k** (joint: step 5) |
 | 4 | A: language detector. O: session language state. H: real deploy and limits. | E: database, trace recorder, metrics API. F: dashboard on fixtures, then the API. | **M3** (joint: step 7) |
@@ -660,12 +702,12 @@ audio session, so Garlic is never blocked waiting for Onion's pipeline.
 
 | Stream | Owner | Status |
 |---|---|---|
-| Phase 0 | Onion | built, 63 tests passing, waiting for Garlic's contract review |
-| O Orchestrator | Onion | not started |
+| Phase 0 | Onion | done, contracts frozen |
+| O Orchestrator | Onion | done on mocks, 128 tests passing in total |
 | A VAD + STT + language detection | Onion | not started |
-| D Browser client | Onion | not started |
-| H Deploy | Onion | not started |
-| B Agent | Garlic | in progress: tools, guardrails, and the agent loop built against a scripted LLM, 109 tests. No real LLM client yet. |
+| D Browser client | Onion | written, needs a check in a real browser |
+| H Deploy | Onion | Dockerfile and `render.yaml` written, service not created yet |
+| B Agent | Garlic | not started |
 | C TTS | Garlic | not started |
 | E DB + metrics | Garlic | not started |
 | F Dashboard | Garlic | not started |
@@ -676,7 +718,7 @@ audio session, so Garlic is never blocked waiting for Onion's pipeline.
 | | Milestone | Proves |
 |---|---|---|
 | M0 | Phase 0 merged, mock test green | Both devices can build against the contracts |
-| M1 | Browser talks to the mock pipeline on the public Space, barge-in works | Transport, cancellation, and hosting are sound |
+| M1 | Browser talks to the mock pipeline on the public Render link, barge-in works | Transport, cancellation, and hosting are sound |
 | M2 | First real voice call in English/Hindi, locally | All four providers work together |
 | M2k | First real Kannada call, manual language choice | The second provider route works |
 | M3 | Auto-detection working, real pipeline deployed, traces in the dashboard | Latency is measured per language, not guessed |
@@ -702,6 +744,7 @@ stages in section 7 map onto these one to one.
 | Kannada and Bengali latency is worse (batch STT, network TTS) | Report per language. Do not let it drag down or hide behind the English/Hindi figure. |
 | Azure free tier runs out | Usage counter and daily cap in C and H. Piper still serves English and Hindi. |
 | Agent replies in the wrong language or mixes scripts | Session language is passed to the LLM explicitly and checked on output before TTS. |
+| Silero and Piper do not fit in the host's 512 MB | ONNX Runtime only, no PyTorch. One voice per language. Measure when each is added. If it does not fit, Azure Speech takes over TTS for every language and Piper is dropped. |
 | Piper is too slow on the free CPU | Garlic benchmarks it in stage 1, as the first task in C. Switch to the backup provider if it misses the target. |
 | Latency looks bad from a far region | Report the server and provider regions next to every figure |
 | Model invents loan figures | Guardrail 2 is enforced in code and covered by adversarial evals |
@@ -876,3 +919,87 @@ above give the reasons.
       when the trace has it, and leave the bar whole when it does not.
 - [ ] **E and F: say what `llm_first_token` means** next to the latency figures: the
       first sentence cleared to be spoken, not the model's first token.
+
+### Reply to notes 5 to 9, and what stage 1 means for Garlic
+
+Added by Onion on 2026-10-07, with the orchestrator built.
+
+5. **Mock TTS fix: pulled, thank you.** All tests pass on the Mac.
+
+6. **Loading and mounting: agreed, and built** in `app/pipeline/plugins.py`, with one
+   difference from Garlic's suggestion.
+   - `app.agent` is imported when `agent` or `llm` is not mocked, and `app.tts` when
+     `tts` is not mocked. Importing the package must register its implementations.
+   - **`app.db` and `app.metrics` are imported whenever they exist**, mocked or not.
+     They need no keys, and the metrics API should work on a fresh clone. The trace
+     sink is still the in-memory mock until `trace_sink` is taken out of `MULTIVOCO_MOCK`.
+   - If a package exports `router`, it is included in the app.
+   - `web/dashboard/` is mounted at `/dashboard` when the folder exists. The call page
+     is mounted at `/`, last, so put API routes under `/api/`.
+
+7. **Startup and shutdown hooks: agreed, and built.** A package may export
+   `async def startup()` and `async def shutdown()`. Startup hooks run in load order
+   before the app serves requests. Shutdown hooks run in reverse order, and one that
+   raises is logged and does not stop the others.
+
+8. **Error types: added** to `app/core/interfaces.py`.
+   - `ProviderError`: the turn is abandoned, the client gets `provider_error`, and the
+     call carries on. The agent is told what was spoken before the failure.
+   - `QuotaExceeded(ProviderError)`: the same, but the client gets `language_unavailable`.
+   - Raise them from `synthesize()`, `respond()`, or anything they call. Any other
+     exception is treated as a bug: the client gets `internal` and the call ends.
+
+9. **`callbacks` table: yes.** Go ahead in `app/db/models.py`, and update section 4.4
+   and `test_schema_has_the_agreed_tables` with it.
+
+Four things the orchestrator does that Garlic's code will see:
+
+10. **`commit_spoken` is called for everything the caller heard**, not only for
+    `respond()` replies. That includes the greeting, and one line the orchestrator
+    writes itself: "English, Hindi, Kannada, or Bangla?", asked when detection is
+    unsure. It is called with an empty string when a reply was cut off before any of
+    it was heard. Store whatever it gives as the assistant's turn.
+
+11. **`ctx.extra["language_pending"]`** is `True` from the start of an Auto call until
+    the language is known, and `False` otherwise. While it is `True`, `ctx.language` is
+    a placeholder (`en`) and `greeting(ctx)` must be language-neutral. When the caller
+    answers the language question, `greeting(ctx)` is called a second time with the
+    language known, so it can then be in that language.
+
+12. **End each sentence-sized `TextDelta` with whitespace.** The splitter treats a full
+    stop as the end of a sentence only once it sees what follows, so that "8,450.50"
+    stays whole when text arrives token by token. A delta ending in "fifth." with
+    nothing after it is held until the next delta or the end of the reply. "fifth. "
+    is spoken at once. The danda needs no space.
+
+13. **One more addition to `app/core/`, in Onion's own stream:** `VAD.is_speech`, a
+    flag for whether the latest frame was speech. Without it a 100 ms sound could not
+    be told from a 400 ms one, because the end-of-speech event comes after a fixed
+    silence either way. Only the VAD (A) implements it and only the orchestrator reads
+    it, so nothing changes for Garlic.
+
+Added to "What Garlic needs to do":
+
+- [ ] **B: follow notes 10, 11, and 12** in the agent: store what `commit_spoken` gives,
+      keep the greeting neutral while `language_pending` is set, and end sentence
+      deltas with a space.
+- [ ] **B, C: raise `ProviderError` or `QuotaExceeded`** for provider failures (note 8).
+- [ ] **B, C, E: register on import, and export `startup`, `shutdown`, and `router`**
+      where needed (notes 6 and 7).
+- [ ] **E: add the `callbacks` table** (note 9).
+
+14. **Hosting has moved from Hugging Face Spaces to Render** (2026-10-08). New Docker
+    Spaces now need a paid plan. Render's free web service builds the same Dockerfile,
+    supports WebSockets, and needs no card, but it has **512 MB of memory** and a
+    shared CPU, and sleeps after 15 idle minutes.
+    - For C: Piper must run on ONNX Runtime, with no PyTorch in the image, and load one
+      voice per language. Benchmark it against 512 MB and a shared CPU, not the larger
+      Space hardware section 6 used to name. If it does not fit next to Silero, Azure
+      Speech takes over TTS for every language.
+    - For E: keep the database pool small. Every megabyte counts.
+    - For `docs/quotas.md`: the hosting rows are now Render's. Onion will add them.
+    - H's checkbox in section 6 says Render now, so note 4 in section 11 and its reply
+      above read "Hugging Face Spaces" only for history.
+
+- [ ] **C: benchmark Piper within 512 MB and a shared CPU** (note 14), and report the
+      memory it uses per loaded voice.

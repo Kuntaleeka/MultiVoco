@@ -88,11 +88,13 @@ class MockVAD:
         self._end_silence_frames = end_silence_frames
         self._speaking = False
         self._quiet = 0
+        self.is_speech = False
 
     async def process(self, frame: bytes) -> VADEvent | None:
         samples = array.array("h", frame)
         rms = math.sqrt(sum(s * s for s in samples) / len(samples)) if samples else 0.0
-        if rms >= self._threshold:
+        self.is_speech = rms >= self._threshold
+        if self.is_speech:
             self._quiet = 0
             if not self._speaking:
                 self._speaking = True
