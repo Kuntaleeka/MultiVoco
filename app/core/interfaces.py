@@ -16,6 +16,23 @@ from typing import Any, Literal, Protocol, runtime_checkable
 from app.core.languages import Lang
 from app.core.trace import CallRecord, TurnTrace
 
+
+class ProviderError(Exception):
+    """A provider failed: network error, bad response, timeout.
+
+    Any component may raise it. The orchestrator abandons the turn and sends the client
+    the protocol error `provider_error`.
+    """
+
+
+class QuotaExceeded(ProviderError):
+    """A provider refused because a quota, rate limit, or usage cap was hit.
+
+    The orchestrator sends the client `language_unavailable`, since the caller can
+    still continue in a language served by other providers.
+    """
+
+
 # Audio from the browser: PCM16 mono, 16 kHz, 512 samples per frame (32 ms).
 INPUT_SAMPLE_RATE = 16_000
 FRAME_SAMPLES = 512
@@ -38,7 +55,14 @@ class VADEvent:
 
 @runtime_checkable
 class VAD(Protocol):
-    """One instance per call. Fed every input frame, in order."""
+    """One instance per call. Fed every input frame, in order.
+
+    SPEECH_END comes some time after the caller stops, once the silence has lasted long
+    enough. `is_speech` says whether the most recent frame itself was speech, so a
+    caller can tell 100 ms of sound from 400 ms without knowing that delay.
+    """
+
+    is_speech: bool
 
     async def process(self, frame: bytes) -> VADEvent | None: ...
 
