@@ -1,0 +1,15 @@
+# Render Blueprint: one free web service built from the Dockerfile.
+# Steps: deploy/README.md
+services:
+  - type: web
+    name: multivoco
+    runtime: docker
+    plan: free
+    region: singapore # closest free region to India
+    healthCheckPath: /healthz
+    autoDeploy: true
+    envVars:
+      - key: MULTIVOCO_REGION
+        value: render-singapore
+      - key: MULTIVOCO_MOCK
+        value: all

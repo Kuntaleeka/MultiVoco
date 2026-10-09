@@ -10,7 +10,7 @@ the code is right and this file has a bug.
 |---|---|
 | `/ws/call` | A voice call. Everything below describes this endpoint. |
 | `/ws/echo` | Sends back every text and binary frame unchanged. For checking transport. |
-| `/healthz` | `{"status": "ok", "region": ..., "mock": ...}` |
+| `/healthz` | `{"status": "ok", "region": ..., "mock": ..., "active_sessions": ...}` |
 
 ## Frames
 
@@ -126,6 +126,13 @@ Client rules:
 - If the transcript's script disagrees with the session language two turns in a row,
   the server switches and sends `language` with `source: "script"`.
 - `set_language` always wins and stops further automatic switching.
+
+### What counts as an interruption
+
+Speech during a reply becomes a barge-in once it has lasted about 250 ms. Shorter
+sounds are ignored and the reply carries on. The server stays interruptible until the
+audio it sent has had time to play, not just until it has finished sending it, so a
+`flush` can arrive after `audio_end` for the same turn.
 
 ## Errors and close codes
 

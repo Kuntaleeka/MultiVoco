@@ -1,0 +1,49 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>MultiVoco</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Noto+Sans:wght@400;500;600&family=Noto+Sans+Bengali:wght@400;500&family=Noto+Sans+Devanagari:wght@400;500&family=Noto+Sans+Kannada:wght@400;500&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="style.css" />
+  </head>
+  <body>
+    <main>
+      <header>
+        <h1>MultiVoco</h1>
+        <p>A voice agent for loan servicing. All customer data is synthetic.</p>
+      </header>
+
+      <section class="controls">
+        <label for="language">Language</label>
+        <select id="language">
+          <option value="auto">Auto-detect</option>
+          <option value="en">English</option>
+          <option value="hi">हिन्दी / Hinglish</option>
+          <option value="kn">ಕನ್ನಡ</option>
+          <option value="bn">বাংলা</option>
+        </select>
+        <button id="call" type="button">Start call</button>
+      </section>
+
+      <section class="status" aria-live="polite">
+        <span id="state" class="pill" data-state="idle">Not connected</span>
+        <span id="detected" class="pill subtle" hidden></span>
+      </section>
+
+      <p id="error" class="error" role="alert" hidden></p>
+
+      <ol id="transcript" class="transcript" aria-label="Transcript"></ol>
+
+      <footer>
+        <p>Use headphones for the best result. You can interrupt the agent at any time.</p>
+      </footer>
+    </main>
+    <script type="module" src="app.js"></script>
+  </body>
+</html>
