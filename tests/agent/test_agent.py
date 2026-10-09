@@ -82,11 +82,16 @@ def make_agent(loan_db, lang: Lang, *rounds: list, verified: bool = False):
 
 
 async def run(agent, ctx, user_text: str = "When is my next EMI due?") -> list:
-    return [event async for event in agent.respond(user_text, ctx)]
+    events = [event async for event in agent.respond(user_text, ctx)]
+    # The orchestrator's splitter holds a sentence until it sees what follows the full
+    # stop, so every delta must end in whitespace (section 12, note 12).
+    assert all(e.text[-1:].isspace() for e in events if isinstance(e, TextDelta))
+    return events
 
 
 def text_of(events: list) -> str:
-    return "".join(event.text for event in events if isinstance(event, TextDelta))
+    """What the caller hears, without the space that ends the last delta."""
+    return "".join(event.text for event in events if isinstance(event, TextDelta)).rstrip()
 
 
 def kinds(events: list) -> list[type]:
@@ -117,7 +122,7 @@ async def test_a_reply_reaches_the_caller_one_checked_sentence_at_a_time(loan_db
     assert kinds(events) == [ToolResult, ToolResult, ModelFirstToken, TextDelta, TextDelta, Done]
     assert [e.text for e in events if isinstance(e, TextDelta)] == [
         "Thank you, Asha. ",
-        REAL_EMI[Lang.EN],
+        REAL_EMI[Lang.EN] + " ",
     ]
     assert events[0].result["verified"] is True
     assert events[1].result["emi_amount"] == "8450.00"
@@ -125,6 +130,20 @@ async def test_a_reply_reaches_the_caller_one_checked_sentence_at_a_time(loan_db
     assert ctx.verified_customer_id == ASHA_ID
     # The model saw each tool result before it wrote the reply.
     assert [m.role for m in llm.seen[2]][-4:] == ["assistant", "tool", "assistant", "tool"]
+
+
+async def test_words_before_a_tool_call_are_released_before_the_tool_runs(loan_db):
+    agent, ctx, _ = make_agent(
+        loan_db,
+        Lang.EN,
+        [*say("Let me check."), call("get_next_emi")],
+        say(REAL_EMI[Lang.EN]),
+        verified=True,
+    )
+    events = await run(agent, ctx)
+    assert kinds(events) == [ModelFirstToken, TextDelta, ToolResult, TextDelta, Done]
+    assert events[1] == TextDelta("Let me check. ")
+    assert text_of(events) == "Let me check. " + REAL_EMI[Lang.EN]
 
 
 @pytest.mark.parametrize("lang", ALL_LANGS)

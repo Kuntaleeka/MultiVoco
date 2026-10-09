@@ -707,7 +707,7 @@ audio session, so Garlic is never blocked waiting for Onion's pipeline.
 | A VAD + STT + language detection | Onion | not started |
 | D Browser client | Onion | written, needs a check in a real browser |
 | H Deploy | Onion | Dockerfile and `render.yaml` written, service not created yet |
-| B Agent | Garlic | not started |
+| B Agent | Garlic | in progress: tools, guardrails, and the agent loop built against a scripted LLM. No real LLM client yet. |
 | C TTS | Garlic | not started |
 | E DB + metrics | Garlic | not started |
 | F Dashboard | Garlic | not started |
@@ -980,7 +980,7 @@ Four things the orchestrator does that Garlic's code will see:
 
 Added to "What Garlic needs to do":
 
-- [ ] **B: follow notes 10, 11, and 12** in the agent: store what `commit_spoken` gives,
+- [x] **B: follow notes 10, 11, and 12** in the agent: store what `commit_spoken` gives,
       keep the greeting neutral while `language_pending` is set, and end sentence
       deltas with a space.
 - [ ] **B, C: raise `ProviderError` or `QuotaExceeded`** for provider failures (note 8).

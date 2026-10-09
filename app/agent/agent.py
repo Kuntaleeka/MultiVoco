@@ -120,7 +120,7 @@ class LoanAgent:
                 yield event
             return
         if rejected is not None or not spoken:
-            async for event in self._miss(ctx, prefix=_gap(spoken)):
+            async for event in self._miss(ctx):
                 yield event
             return
         self._misses = 0
@@ -190,8 +190,18 @@ class LoanAgent:
                 f"it is not in {LANGUAGES[ctx.language].name}, the session language.",
             )
             return None
-        text = _gap(attempt.spoken) + sentence
-        attempt.spoken.append(text)
+        return self._spoken(sentence, attempt)
+
+    @staticmethod
+    def _spoken(text: str, attempt: _Attempt | None = None) -> TextDelta:
+        """A delta that ends in whitespace, so the orchestrator speaks it without waiting.
+
+        Its splitter only ends a sentence once it sees what follows the full stop.
+        """
+        if not text[-1:].isspace():
+            text += " "
+        if attempt is not None:
+            attempt.spoken.append(text)
         return TextDelta(text)
 
     async def _run_tool(self, call: ToolCall, ctx: CallContext) -> tuple[dict[str, Any], float]:
@@ -211,28 +221,21 @@ class LoanAgent:
                 }
         return result, (time.perf_counter() - started) * 1000
 
-    async def _miss(self, ctx: CallContext, prefix: str = "") -> AsyncIterator[AgentEvent]:
+    async def _miss(self, ctx: CallContext) -> AsyncIterator[AgentEvent]:
         """Nothing usable this turn: say the safe line, or hand over after too many in a row."""
         self._misses += 1
         if self._misses >= MAX_MISSES:
-            async for event in self._hand_off(
-                ctx, "repeated_misunderstanding", say_line=True, prefix=prefix
-            ):
+            async for event in self._hand_off(ctx, "repeated_misunderstanding", say_line=True):
                 yield event
             return
-        yield TextDelta(prefix + SAFE_REPLY[ctx.language])
+        yield self._spoken(SAFE_REPLY[ctx.language])
         yield Done("stop")
 
     async def _hand_off(
-        self, ctx: CallContext, reason: str, *, say_line: bool, prefix: str = ""
+        self, ctx: CallContext, reason: str, *, say_line: bool
     ) -> AsyncIterator[AgentEvent]:
         self._handed_off = reason
         if say_line:
-            yield TextDelta(prefix + HANDOFF_LINE[ctx.language])
+            yield self._spoken(HANDOFF_LINE[ctx.language])
         yield Handoff(reason)
         yield Done("handoff")
-
-
-def _gap(spoken: list[str]) -> str:
-    """A space to put before the next piece, if what was already spoken does not end in one."""
-    return " " if spoken and not spoken[-1][-1:].isspace() else ""
