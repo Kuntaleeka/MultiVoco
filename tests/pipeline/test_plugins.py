@@ -77,7 +77,7 @@ def test_no_provider_package_is_imported_when_everything_is_mocked(fake_packages
 def test_a_package_that_does_not_exist_yet_is_skipped(settings_env, caplog):
     settings_env(MOCK="none")
     loaded = plugins.load_packages(FastAPI())
-    assert "app.tts" not in [m.__name__ for m in loaded]
+    assert "app.langid" not in [m.__name__ for m in loaded]
     assert "does not exist yet" in caplog.text
 
 

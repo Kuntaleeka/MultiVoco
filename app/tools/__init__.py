@@ -31,4 +31,6 @@ def build_tools(
     return {tool.spec.name: tool for tool in tools}
 
 
-__all__ = ["HANDOFF_TOOL", "MAX_VERIFICATION_ATTEMPTS", "LoanTool", "build_tools"]
+VERIFY_TOOL = VerifyIdentity.spec.name
+
+__all__ = ["HANDOFF_TOOL", "MAX_VERIFICATION_ATTEMPTS", "VERIFY_TOOL", "LoanTool", "build_tools"]

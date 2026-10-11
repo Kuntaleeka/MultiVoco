@@ -14,7 +14,13 @@ from dataclasses import dataclass, field
 from datetime import date
 from typing import Any
 
-from app.agent.guardrails import FigureLedger, SentenceBuffer, wrong_language
+from app.agent.guardrails import (
+    FigureLedger,
+    SentenceBuffer,
+    identity_details_not_given,
+    plain_spaces,
+    wrong_language,
+)
 from app.agent.lines import GREETINGS, HANDOFF_LINE, NEUTRAL_GREETING, SAFE_REPLY
 from app.agent.prompt import build_system_prompt
 from app.core.interfaces import (
@@ -31,11 +37,13 @@ from app.core.interfaces import (
 )
 from app.core.languages import LANGUAGES, Lang
 from app.core.registry import get_llm
-from app.tools import HANDOFF_TOOL, MAX_VERIFICATION_ATTEMPTS, LoanTool, build_tools
+from app.tools import HANDOFF_TOOL, MAX_VERIFICATION_ATTEMPTS, VERIFY_TOOL, LoanTool, build_tools
 
 log = logging.getLogger(__name__)
 
 MAX_TOOL_ROUNDS = 4
+# The prompt asks for one or two sentences. This is the hard stop.
+MAX_SENTENCES = 4
 # Turns in a row that ended in the safe reply, or with nothing heard, before a human takes over.
 MAX_MISSES = 3
 # Set by the orchestrator in ctx.extra while the session language is still being detected.
@@ -49,6 +57,7 @@ class _Attempt:
     spoken: list[str] = field(default_factory=list)
     rejected: tuple[str, str] | None = None  # (sentence, problem)
     handoff: str | None = None
+    complete: bool = False  # nothing more should be released or run in this attempt
 
 
 class LoanAgent:
@@ -132,6 +141,7 @@ class LoanAgent:
         """One pass: stream the model, release checked sentences, run tools, repeat."""
         llm = self._llm_for(ctx.language)
         specs = [tool.spec for tool in self._tools.values()]
+        made: set[str] = set()
         for _ in range(MAX_TOOL_ROUNDS):
             system = build_system_prompt(
                 ctx, self._today(), rejected=rejected, spoken="".join(attempt.spoken)
@@ -148,16 +158,19 @@ class LoanAgent:
                         if not self._first_token_sent:
                             self._first_token_sent = True
                             yield ModelFirstToken()
-                        for sentence in buffer.feed(event.text):
+                        for sentence in buffer.feed(plain_spaces(event.text)):
                             if delta := self._release(sentence, ctx, attempt):
                                 yield delta
-                            else:
+                            if attempt.complete:
                                 return
             if tail := buffer.flush():
                 if delta := self._release(tail, ctx, attempt):
                     yield delta
-                else:
+                if attempt.complete:
                     return
+            # A model that repeats a call it has just made is going round in circles.
+            calls = [call for call in calls if _key(call) not in made]
+            made.update(_key(call) for call in calls)
             if not calls:
                 return
 
@@ -176,8 +189,12 @@ class LoanAgent:
         log.warning("tool loop did not finish in %d rounds", MAX_TOOL_ROUNDS)
 
     def _release(self, sentence: str, ctx: CallContext, attempt: _Attempt) -> TextDelta | None:
-        """The sentence as a delta if it passes the guardrails. Otherwise record why not."""
+        """The sentence as a delta if it passes the guardrails. Otherwise record why not.
+
+        Either way it may mark the attempt complete, which stops the model's stream.
+        """
         if figures := self._ledger.unsupported(sentence):
+            attempt.complete = True
             attempt.rejected = (
                 sentence.strip(),
                 f"it states {', '.join(figures)}, which no tool result in this call contains. "
@@ -185,12 +202,19 @@ class LoanAgent:
             )
             return None
         if wrong_language(sentence, ctx.language):
+            attempt.complete = True
             attempt.rejected = (
                 sentence.strip(),
                 f"it is not in {LANGUAGES[ctx.language].name}, the session language.",
             )
             return None
-        return self._spoken(sentence, attempt)
+        delta = self._spoken(sentence, attempt)
+        # Seen live: after its question the model carries on, asking it again in other
+        # words or adding stage directions. A question put to the caller ends the reply,
+        # and so does a reply that has run long.
+        if sentence.rstrip().endswith("?") or len(attempt.spoken) >= MAX_SENTENCES:
+            attempt.complete = True
+        return delta
 
     @staticmethod
     def _spoken(text: str, attempt: _Attempt | None = None) -> TextDelta:
@@ -207,11 +231,20 @@ class LoanAgent:
     async def _run_tool(self, call: ToolCall, ctx: CallContext) -> tuple[dict[str, Any], float]:
         started = time.perf_counter()
         tool = self._tools.get(call.name)
+        args = call.args if isinstance(call.args, dict) else {}
+        said = [m.content for m in (*self.history, *self._pending) if m.role == "user"]
         if tool is None:
             result: dict[str, Any] = {"error": "unknown_tool", "message": "No such tool."}
+        elif call.name == VERIFY_TOOL and (missing := identity_details_not_given(args, said)):
+            # Not run, so an invented detail does not cost the caller an attempt.
+            result = {
+                "error": "details_not_given",
+                "message": f"The caller has not said {' or '.join(missing)}. "
+                "Ask the caller for it. Never guess an identity detail.",
+            }
         else:
             try:
-                result = await tool.run(call.args if isinstance(call.args, dict) else {}, ctx)
+                result = await tool.run(args, ctx)
             except Exception:
                 # A broken tool or database must not end the call. No details go to the model.
                 log.exception("tool %s failed", call.name)
@@ -239,3 +272,7 @@ class LoanAgent:
             yield self._spoken(HANDOFF_LINE[ctx.language])
         yield Handoff(reason)
         yield Done("handoff")
+
+
+def _key(call: ToolCall) -> str:
+    return call.name + json.dumps(call.args, sort_keys=True, ensure_ascii=False, default=str)

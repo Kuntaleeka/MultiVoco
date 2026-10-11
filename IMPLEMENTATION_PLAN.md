@@ -393,7 +393,9 @@ interface tests for all four languages.
 
 Owns `app/agent/`, `app/tools/`. Depends on: Phase 0. Fully testable in text, no audio needed.
 
-- [ ] Groq streaming client with tool calling, retries, timeout, Gemini as backup
+- [x] Groq streaming client with tool calling, retries, timeout, Gemini as backup.
+      Models, checked live on 2026-10-11: `openai/gpt-oss-120b`, then
+      `openai/gpt-oss-20b`, then Gemini `gemini-3.5-flash-lite` (section 11, note 11).
 - [ ] Tools: `verify_identity`, `get_loan_summary`, `get_next_emi`, `get_payment_history`,
       `record_payment_promise`, `request_callback`, `handoff_to_human`.
       Six of the seven are built and tested. `request_callback` waits on the `callbacks`
@@ -424,7 +426,7 @@ Owns `app/agent/`, `app/tools/`. Depends on: Phase 0. Fully testable in text, no
 - [ ] Identity verification works when the caller reads digits or a date of birth in
       any of the four languages. `verify_identity` finds the customer by `phone_last4`
       plus `dob`, the only identifying fields a caller can say (section 11, note 3).
-- [ ] `scripts/chat.py`: text REPL against the agent, with `--lang` (workstream G uses this)
+- [x] `scripts/chat.py`: text REPL against the agent, with `--lang` (workstream G uses this)
 
 Done when: unit tests cover each guardrail in every language, including attempts to
 get account data before verification and attempts to get the model to invent a figure.
@@ -433,11 +435,17 @@ get account data before verification and attempts to get the model to invent a f
 
 Owns `app/tts/`. Depends on: Phase 0.
 
-- [ ] Piper wrapper in the executor, streaming PCM chunks, cancellable mid-sentence
-- [ ] Voice selection for English and Hindi, with the model download handled at build time
-- [ ] Text normalisation: rupee amounts, dates, loan IDs, digits read one at a time
-- [ ] Warm-up at startup so the first turn is not slow
-- [ ] Loaded Piper voices and the Azure client are cached once per process inside
+- [x] Piper wrapper in the executor, streaming PCM chunks, cancellable mid-sentence.
+      Audio comes out in 100 ms pieces and a cancel takes effect at the next piece.
+      Piper computes a whole sentence at once, so that one job cannot be stopped part-way.
+- [ ] Voice selection for English and Hindi, with the model download handled at build time.
+      Chosen: `en_US-lessac-medium` and `hi_IN-priyamvada-medium`. Not yet listened to
+      by anyone, and the build-time download is H's Dockerfile (section 11, note 11).
+- [ ] Text normalisation: rupee amounts, dates, loan IDs, digits read one at a time.
+      Done: markup, grouping commas, currency signs, trailing ".00", "EMI" spelled out.
+      Not done: dates, loan IDs, digits one at a time.
+- [x] Warm-up at startup so the first turn is not slow
+- [x] Loaded Piper voices and the Azure client are cached once per process inside
       `app/tts/`. The registered factory only hands out the cached instance, because
       the registry runs the factory on every `get_tts` call (section 11, note 2).
 - [ ] `[kn]` Azure Speech client with streaming output and cancellation, Kannada voice
@@ -449,7 +457,9 @@ Owns `app/tts/`. Depends on: Phase 0.
 - [ ] Azure as a fallback for English and Hindi if Piper fails or is too slow
 - [ ] Character-usage counter for Azure, so the free tier is not exhausted mid-demo
 - [ ] Benchmark per language: time to first chunk and real-time factor on 2 vCPUs for
-      Piper, network time to first chunk for Azure, in `docs/tts.md`
+      Piper, network time to first chunk for Azure, in `docs/tts.md`.
+      Piper is measured on Garlic's laptop only, in `docs/tts.md`. Still to do: the
+      same run on Render, and Azure.
 
 Done when: first chunk for a 10-word sentence arrives fast enough for the latency
 target on the host's hardware (Render free: shared CPU, 512 MB) in every language, and cancellation stops synthesis
@@ -500,7 +510,7 @@ http://localhost:8000:
 Owns `app/db/`, `app/metrics/`, `scripts/seed.py`. Depends on: Phase 0.
 
 - [ ] Async engine, SQLite locally and Neon in production, migrations with Alembic
-- [ ] Seed script: about 20 synthetic customers with varied loan states, spread across
+- [x] Seed script: about 20 synthetic customers with varied loan states, spread across
       the four languages. Each customer has a different `phone_last4` + `dob` pair.
 - [x] `customers` has a unique constraint on (`phone_last4`, `dob`), with a test
       (section 11, note 3)
@@ -707,9 +717,9 @@ audio session, so Garlic is never blocked waiting for Onion's pipeline.
 | A VAD + STT + language detection | Onion | not started |
 | D Browser client | Onion | written, needs a check in a real browser |
 | H Deploy | Onion | Dockerfile and `render.yaml` written, service not created yet |
-| B Agent | Garlic | in progress: tools, guardrails, and the agent loop built against a scripted LLM. No real LLM client yet. |
-| C TTS | Garlic | not started |
-| E DB + metrics | Garlic | not started |
+| B Agent | Garlic | in progress: tools, guardrails, agent loop, and the Groq and Gemini client, tried live in English, Hindi, and Kannada. Left: `request_callback`, Kannada and Bengali prompt work. |
+| C TTS | Garlic | in progress: Piper for English and Hindi built and benchmarked on a laptop. Left: listening check, Render benchmark, Azure. |
+| E DB + metrics | Garlic | started: session module and seed script only |
 | F Dashboard | Garlic | not started |
 | G Evals | Garlic | not started |
 
@@ -858,6 +868,33 @@ both devices agree, then Onion makes the change.
     - Also for O: the agent yields `Done("handoff")` after a `Handoff` event, and keeps
       answering every later `respond()` with the handoff line and another `Handoff`.
 
+11. **What the real LLM client and Piper mean for Onion.** Added on 2026-10-11.
+    - **One of Onion's tests changed.** `test_a_package_that_does_not_exist_yet_is_skipped`
+      in `tests/pipeline/test_plugins.py` asserted that `app.tts` is absent. It now
+      exists, so Garlic changed that one assertion to `app.langid`. When A lands,
+      the test will need a package that is still missing, or a made-up name.
+    - **Groq's free tier is tight.** Every chat model allows 8000 tokens a minute, and
+      one agent request costs about 900 and grows with the call. A single call at a
+      normal talking pace used up the first model's allowance by its fifth turn. The
+      limit is per model, so the client falls through `openai/gpt-oss-120b`, then
+      `openai/gpt-oss-20b`, then Gemini. Two calls at once will reach Gemini, which was
+      slow and unreliable on its free tier (503s, timeouts, 3 to 7 s on the larger
+      models). Expect `provider_error` turns under load. Groq no longer serves Llama
+      models, so section 2's "Llama-class" is out of date.
+    - **For H's Dockerfile:** `piper-tts` is now a dependency (it brings ONNX Runtime
+      and numpy, no PyTorch). The voices must be in `voices/` at run time:
+      `python -m piper.download_voices en_US-lessac-medium hi_IN-priyamvada-medium
+      --download-dir voices`. They are about 60 MB each and git ignores the folder.
+    - **Memory:** both voices loaded take about 240 MB on Garlic's laptop, with ONNX
+      Runtime's memory arena turned off (about 620 MB with it on). That leaves room
+      inside 512 MB, but Silero has to fit in what remains. Figures in `docs/tts.md`.
+    - **Startup is slower:** `app.tts.startup()` loads both voices, about 5 s each.
+      Set `MULTIVOCO_TTS_WARM_UP=false` to skip it.
+    - **Licence:** `piper-tts` is GPL-3.0-or-later. Worth a look before the repo is
+      given a licence of its own.
+    - Asked of Onion: the Dockerfile lines above, and a run of
+      `python -m app.tts.bench` on Render once the service exists.
+
 ## 12. Notes from Onion for Garlic
 
 Written by Onion on 2026-10-07, in reply to section 11. Same convention: each device
@@ -910,7 +947,7 @@ above give the reasons.
       when the model's first token arrives and before the first `TextDelta`. On a
       reply that is regenerated after a failed guardrail check, yield it for the first
       attempt only.
-- [ ] **C: make the shared TTS safe for concurrent `synthesize()` calls.** It will be
+- [x] **C: make the shared TTS safe for concurrent `synthesize()` calls.** It will be
       called at the same time by several sessions, and by overlapping sentences within
       one session. Cancelling one call must not disturb the others.
 - [ ] **E: make the shared trace sink safe for concurrent sessions**, and keep to the
@@ -983,7 +1020,7 @@ Added to "What Garlic needs to do":
 - [x] **B: follow notes 10, 11, and 12** in the agent: store what `commit_spoken` gives,
       keep the greeting neutral while `language_pending` is set, and end sentence
       deltas with a space.
-- [ ] **B, C: raise `ProviderError` or `QuotaExceeded`** for provider failures (note 8).
+- [x] **B, C: raise `ProviderError` or `QuotaExceeded`** for provider failures (note 8).
 - [ ] **B, C, E: register on import, and export `startup`, `shutdown`, and `router`**
       where needed (notes 6 and 7).
 - [ ] **E: add the `callbacks` table** (note 9).

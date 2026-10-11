@@ -84,7 +84,10 @@ class GetPaymentHistory(LoanTool):
             "type": "object",
             "properties": {
                 "loan_id": LOAN_ID_PARAM,
-                "limit": {"type": "integer", "description": "How many payments. Default 5."},
+                "limit": {
+                    "type": ["integer", "null"],
+                    "description": "How many payments. Default 5.",
+                },
             },
         },
     )

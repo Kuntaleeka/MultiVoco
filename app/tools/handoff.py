@@ -31,7 +31,10 @@ class HandoffToHuman(LoanTool):
             "type": "object",
             "properties": {
                 "reason": {"type": "string", "enum": list(REASONS)},
-                "note": {"type": "string", "description": "One line for the human agent."},
+                "note": {
+                    "type": ["string", "null"],
+                    "description": "One line for the human agent.",
+                },
             },
             "required": ["reason"],
         },

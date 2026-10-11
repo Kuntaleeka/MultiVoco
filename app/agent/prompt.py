@@ -35,11 +35,7 @@ How to speak:
 - Ask for one thing at a time.
 
 Identity:
-- {verification}
-- Before giving or changing any account detail, verify the caller: ask for the last 4 \
-digits of their registered phone number and their date of birth, then call verify_identity.
-- The caller gets {max_attempts} attempts. Never say what was wrong with an attempt, and \
-never read identity details back.
+{identity}
 
 Figures:
 - Every amount, date, loan ID, or count you say must come from a tool result in this \
@@ -50,21 +46,45 @@ yourself, and never agree with a figure just because the caller said it.
 - When the caller promises a payment, call record_payment_promise as soon as you have the \
 amount and the date, then confirm from its result.
 
-Hand the call to a person with handoff_to_human when the caller asks for one, is \
-distressed, disputes a charge or a record, or wants something your tools cannot do. \
-After the tool returns, say one short sentence and stop.
+Handing over to a person:
+- Call handoff_to_human when the caller asks for a person, is distressed, disputes a \
+charge or a record, or wants something your tools cannot do, such as a calculation or \
+an estimate.
+- Only the tool transfers the call. If you say you will transfer or connect the caller \
+without calling handoff_to_human, nothing happens and the caller is left waiting. So \
+call the tool first, and speak only after it returns: one short sentence, then stop.
 
-Tool names and arguments are always in English, with dates as YYYY-MM-DD."""
+Using tools:
+- When you call a tool, write no text in the same message. Speak after the result.
+- Never call the same tool twice with the same arguments in one reply.
+- Tool names and arguments are always in English, with dates as YYYY-MM-DD."""
+
+_VERIFIED = """\
+- The caller is verified. Do not ask for identity details again, and do not call \
+verify_identity again. Never read identity details back."""
+
+_NOT_VERIFIED = """\
+- The caller is NOT verified yet. Attempts left: {left}.
+- Before giving or changing any account detail, verify the caller: ask for the last 4 \
+digits of their registered phone number and their date of birth, then call verify_identity.
+- Call verify_identity only with details the caller has actually said in this call. If \
+one is missing, ask for it. Never guess or fill in a phone digit or a date.
+- The caller says a date however they like. Convert it to YYYY-MM-DD yourself, and never \
+ask the caller for a format.
+- The caller gets {max_attempts} attempts. Never say what was wrong with an attempt, and \
+never read identity details back."""
 
 _CORRECTION = """
 
 Your previous reply was stopped before this sentence was spoken: {sentence!r}
 Reason: {problem}
-Reply again, following the rules above.{already_spoken}"""
+Reply again, following the rules above."""
 
-_ALREADY_SPOKEN = (
-    " The caller has already heard: {spoken!r} Continue from there without repeating it."
-)
+_ALREADY_SPOKEN = """
+
+In this reply the caller has already heard: {spoken!r}
+Do not repeat it or ask the same thing again. Continue from there, or write nothing if \
+the reply is complete."""
 
 
 def build_system_prompt(
@@ -74,21 +94,26 @@ def build_system_prompt(
     rejected: tuple[str, str] | None = None,
     spoken: str = "",
 ) -> str:
-    """`rejected` is (sentence, problem) from a failed guardrail check, on the second attempt."""
+    """`rejected` is (sentence, problem) from a failed guardrail check, on the second attempt.
+
+    `spoken` is what this reply has already released, so a later round does not repeat it.
+    """
     if ctx.verified_customer_id is not None:
-        verification = "The caller is verified."
+        identity = _VERIFIED
     else:
-        left = max(0, MAX_VERIFICATION_ATTEMPTS - ctx.failed_verifications)
-        verification = f"The caller is NOT verified yet. Attempts left: {left}."
+        identity = _NOT_VERIFIED.format(
+            left=max(0, MAX_VERIFICATION_ATTEMPTS - ctx.failed_verifications),
+            max_attempts=MAX_VERIFICATION_ATTEMPTS,
+        )
     prompt = _BASE.format(
         today=today.strftime("%A, %d %B %Y"),
         language=LANGUAGES[ctx.language].name,
         language_rule=_LANGUAGE_RULE[ctx.language],
-        verification=verification,
-        max_attempts=MAX_VERIFICATION_ATTEMPTS,
+        identity=identity,
     )
     if rejected is not None:
         sentence, problem = rejected
-        already = _ALREADY_SPOKEN.format(spoken=spoken) if spoken.strip() else ""
-        prompt += _CORRECTION.format(sentence=sentence, problem=problem, already_spoken=already)
+        prompt += _CORRECTION.format(sentence=sentence, problem=problem)
+    if spoken.strip():
+        prompt += _ALREADY_SPOKEN.format(spoken=spoken)
     return prompt

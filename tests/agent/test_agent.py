@@ -176,6 +176,125 @@ async def test_account_data_cannot_be_reached_before_verification(loan_db, lang)
     assert ctx.verified_customer_id is None
 
 
+async def test_an_identity_detail_the_caller_never_said_is_not_tried(loan_db):
+    """Seen live: given only the phone digits, the model invented a date of birth."""
+    agent, ctx, _ = make_agent(
+        loan_db,
+        Lang.EN,
+        [call("verify_identity", phone_last4="4821", dob="1985-07-14")],
+        say("Thank you. And your date of birth, please?"),
+        [call("verify_identity", **ASHA)],
+        say("Thank you, Asha."),
+    )
+    first = await run(agent, ctx, "My phone number ends in 4821")
+    assert first[0].result["error"] == "details_not_given"
+    assert "date of birth" in first[0].result["message"]
+    assert ctx.failed_verifications == 0  # the guess did not cost an attempt
+    agent.commit_spoken(text_of(first), interrupted=False)
+
+    # Once the caller has said it, across two turns, the same call goes through.
+    second = await run(agent, ctx, "I was born on 12th April 1990")
+    assert second[0].result["verified"] is True
+    assert ctx.verified_customer_id == ASHA_ID
+
+
+async def test_identity_invented_from_nothing_is_not_tried(loan_db):
+    """Seen live: asked about an EMI, the model called verify_identity with made-up details."""
+    agent, ctx, _ = make_agent(
+        loan_db,
+        Lang.EN,
+        [call("verify_identity", phone_last4="1234", dob="1985-07-15")],
+        say("May I have the last 4 digits of your phone number?"),
+    )
+    events = await run(agent, ctx, "Hi, when is my next EMI due?")
+    assert events[0].result["error"] == "details_not_given"
+    assert ctx.failed_verifications == 0
+
+
+async def test_a_model_repeating_the_same_tool_call_is_stopped(loan_db):
+    """Seen live: after a refused call the model asked its question and called again, in a loop."""
+    guess = call("verify_identity", phone_last4="4821", dob="1985-07-14")
+    agent, ctx, llm = make_agent(
+        loan_db,
+        Lang.EN,
+        [guess],
+        [*say("And your date of birth, please?"), guess],
+        say("never reached"),
+    )
+    events = await run(agent, ctx, "My phone number ends in 4821")
+    assert kinds(events).count(ToolResult) == 1
+    assert text_of(events) == "And your date of birth, please?"
+    assert len(llm.seen) == 2
+    # The second round was told what the caller had already heard.
+    assert "already heard" not in llm.seen[0][0].content
+
+
+async def test_a_question_already_asked_ends_the_reply(loan_db):
+    """Seen live: the model asked for the date of birth, called a tool, then asked again."""
+    agent, ctx, llm = make_agent(
+        loan_db,
+        Lang.EN,
+        [
+            *say("Could you tell me your date of birth, please?"),
+            call("verify_identity", phone_last4="4821", dob="1990-07-12"),
+        ],
+        say("Could you please provide your date of birth?"),
+    )
+    events = await run(agent, ctx, "My phone number ends in 4821")
+    assert text_of(events) == "Could you tell me your date of birth, please?"
+    assert len(llm.seen) == 1
+    assert events[-1] == Done("stop")
+
+
+async def test_nothing_is_said_after_a_question(loan_db):
+    """Seen live, in Kannada: a question, two more questions, then stage directions."""
+    agent, ctx, _ = make_agent(
+        loan_db,
+        Lang.EN,
+        say("Your loan is active. Anything else? When can you pay? (Waiting for user response)"),
+    )
+    assert text_of(await run(agent, ctx)) == "Your loan is active. Anything else?"
+
+
+async def test_a_reply_that_runs_long_is_cut_off(loan_db):
+    agent, ctx, _ = make_agent(loan_db, Lang.EN, say("One. Two. Three. Four. Five. Six."))
+    events = await run(agent, ctx)
+    assert text_of(events) == "One. Two. Three. Four."
+    assert events[-1] == Done("stop")
+
+
+async def test_odd_spaces_from_the_model_become_plain_ones(loan_db):
+    """Seen live: sentences joined by a narrow no-break space, which the splitter cannot see."""
+    agent, ctx, _ = make_agent(
+        loan_db, Lang.EN, [TextDelta("Your loan is active. It is a long‑term loan.")]
+    )
+    events = await run(agent, ctx)
+    assert [e.text for e in events if isinstance(e, TextDelta)] == [
+        "Your loan is active. ",
+        "It is a long-term loan. ",
+    ]
+
+
+async def test_later_rounds_are_told_what_was_already_said(loan_db):
+    agent, ctx, llm = make_agent(
+        loan_db,
+        Lang.EN,
+        [*say("Let me check."), call("get_next_emi")],
+        say(REAL_EMI[Lang.EN]),
+        verified=True,
+    )
+    await run(agent, ctx)
+    assert "already heard: 'Let me check. '" in llm.seen[1][0].content
+
+
+async def test_identity_spoken_as_words_cannot_be_checked_and_is_let_through(loan_db):
+    agent, ctx, _ = make_agent(
+        loan_db, Lang.EN, [call("verify_identity", **ASHA)], say("Thank you, Asha.")
+    )
+    events = await run(agent, ctx, "four eight two one, twelfth of April nineteen ninety")
+    assert events[0].result["verified"] is True
+
+
 async def test_three_failed_verifications_hand_the_call_to_a_human(loan_db):
     wrong = {"phone_last4": "0000", "dob": "2000-01-01"}
     agent, ctx, _ = make_agent(

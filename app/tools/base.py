@@ -124,7 +124,9 @@ async def pick_loan(session: AsyncSession, ctx: CallContext, raw_loan_id: Any) -
     return candidates[0]
 
 
+# Optional parameters allow null: models often send it for "not given", and Groq
+# rejects the whole reply when an argument does not match the schema.
 LOAN_ID_PARAM = {
-    "type": "integer",
+    "type": ["integer", "null"],
     "description": "Which loan. Leave out if the caller has only one.",
 }
