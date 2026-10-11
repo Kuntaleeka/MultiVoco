@@ -32,7 +32,10 @@ class PipelineConfig:
 
     # Auto-detection on the first utterance.
     min_lang_confidence: float = 0.6
-    min_detect_ms: float = 400.0
+    # Speech needed before a guess is trusted. A one-word opening such as "Namaste" is
+    # the same word in Hindi, Kannada, and Bengali, and was misdetected at 0.7 s in
+    # testing. Below this, the caller is asked instead.
+    min_detect_ms: float = 1000.0
     # Turns in a row whose transcript script disagrees before the language switches.
     switch_after_mismatches: int = 2
 
