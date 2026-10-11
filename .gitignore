@@ -11,3 +11,6 @@ __pycache__/
 .DS_Store
 .vscode/
 .idea/
+
+# Piper voice files (workstream C). Fetch with python -m piper.download_voices
+voices/
