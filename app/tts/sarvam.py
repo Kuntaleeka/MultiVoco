@@ -16,7 +16,7 @@ import httpx2 as httpx
 from app.core.interfaces import ProviderError, QuotaExceeded
 from app.core.languages import Lang
 from app.tts.config import TTSSettings, get_tts_settings
-from app.tts.normalize import clean
+from app.tts.normalize import for_cloud
 
 log = logging.getLogger(__name__)
 
@@ -66,7 +66,7 @@ class SarvamTTS:
             raise ProviderError(f"sarvam: no voice for {language.value}")
         if not self._settings.sarvam_api_key:
             raise ProviderError("sarvam: no API key set (MULTIVOCO_SARVAM_API_KEY)")
-        spoken = clean(text)[:MAX_CHARS]
+        spoken = for_cloud(text, language)[:MAX_CHARS]
         if not spoken:
             return
         self._spend(len(spoken))

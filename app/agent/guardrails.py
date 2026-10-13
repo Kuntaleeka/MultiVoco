@@ -5,9 +5,10 @@ result in this call. The agent is told to write figures in digits (TTS turns the
 words), so the check reads digits in any of the four numeral systems, and rejects
 magnitude words such as "thousand" or "लाख" that would let a figure slip past as words.
 
-Known limits, to be covered by the [kn] and [bn] tasks and by the evals:
-- Small numbers written as words ("five", "पाँच") are not caught.
-- Magnitude words are listed for English and Hindi/Hinglish only.
+Known limits, to be measured by the evals:
+- Numbers below a hundred written as words ("five", "पाँच", "ಐದು") are not caught. Every
+  amount on a loan is above that, so this leaves days of the month and small counts.
+- The Kannada and Bengali word lists have not been checked by a native speaker.
 - A figure the caller said is not allowed until a tool has returned it.
 """
 
@@ -39,6 +40,33 @@ _MAGNITUDE_WORDS = frozenset(
 )
 _TOKEN_SPLIT = re.compile(r"[\s.,;:!?।\"'()\[\]/\-–—]+")
 
+# Kannada and Bengali join and inflect these ("ಐದುಸಾವಿರ", "ಲಕ್ಷಕ್ಕೆ", "হাজারের"), so they
+# are matched anywhere inside a word. The exceptions are everyday words that merely
+# contain one: ಲಕ್ಷಣ (feature), ಲಕ್ಷ್ಯ (attention), লক্ষ্য (aim), লক্ষণ (sign).
+# All of this needs a native speaker's check.
+_MAGNITUDE_STEMS = tuple(
+    _nfc(stem)
+    for stem in (
+        *("ನೂರ", "ಸಾವಿರ", "ಲಕ್ಷ", "ಕೋಟಿ"),  # hundred, thousand, lakh, crore
+        *("হাজার", "লাখ", "লক্ষ", "কোটি"),  # thousand, lakh, lakh, crore
+    )
+)
+_NOT_MAGNITUDES = tuple(_nfc(word) for word in ("ಲಕ್ಷಣ", "ಲಕ್ಷ್ಯ", "লক্ষ্য", "লক্ষণ"))
+# Bengali hundreds: "শত" alone, or a number ending in "শো" (একশো, পাঁচশো).
+_BENGALI_HUNDRED = _nfc("শত")
+_BENGALI_HUNDRED_ENDING = _nfc("শো")
+
+
+def _is_magnitude(token: str) -> bool:
+    if token in _MAGNITUDE_WORDS or token == _BENGALI_HUNDRED:
+        return True
+    if token.endswith(_BENGALI_HUNDRED_ENDING) and len(token) > len(_BENGALI_HUNDRED_ENDING):
+        return True
+    if any(token.startswith(word) for word in _NOT_MAGNITUDES):
+        return False
+    return any(stem in token for stem in _MAGNITUDE_STEMS)
+
+
 # Zero to nine as a caller might say them. Used only to tell "the caller read out some
 # digits, written as words" from "the caller gave no digits". The Kannada and Bengali
 # words need a native speaker's check.
@@ -54,6 +82,21 @@ _DIGIT_WORDS = frozenset(
     )
 )
 _MIN_DIGIT_WORDS = 3
+
+
+_HINDI_DIGITS = "शून्य|एक|दो|तीन|चार|पाँच|पांच|छह|छः|सात|आठ|नौ"
+# "साथ" (with) straight after two or more digit words is a misheard "सात" (seven). One
+# digit word is not enough: "एक साथ" is the everyday phrase for "together".
+_MISHEARD_SEVEN = re.compile(rf"((?:(?:{_HINDI_DIGITS})\s+){{2,}})साथ(?![ऀ-ॿ])")
+
+
+def repair_misheard_digits(text: str) -> str:
+    """Undo a mishearing seen in a real call, where it failed a caller's verification.
+
+    Speech recognition wrote "दो दो एक साथ" for the digits 2 2 1 7, and the model, told
+    about it in the prompt, still read three digits and the word "together".
+    """
+    return _MISHEARD_SEVEN.sub(r"\1सात", text)
 
 
 def numbers_in(text: str) -> list[tuple[str, Decimal]]:
@@ -92,7 +135,7 @@ class FigureLedger:
         """Figures in `text` that no tool result backs, as written. Empty means it passes."""
         bad = [written for written, number in numbers_in(text) if number not in self._allowed]
         tokens = _TOKEN_SPLIT.split(_nfc(text).casefold())
-        bad.extend(token for token in tokens if token in _MAGNITUDE_WORDS)
+        bad.extend(token for token in tokens if _is_magnitude(token))
         return bad
 
 

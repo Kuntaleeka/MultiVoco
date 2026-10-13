@@ -7,6 +7,7 @@ from app.agent.guardrails import (
     FigureLedger,
     SentenceBuffer,
     numbers_in,
+    repair_misheard_digits,
     starts_other_speaker,
     without_own_label,
     wrong_language,
@@ -63,6 +64,57 @@ def test_figures_no_tool_returned_are_caught(text, bad):
     ledger = FigureLedger()
     ledger.add(EMI_RESULT)
     assert ledger.unsupported(text) == [unicodedata.normalize("NFC", item) for item in bad]
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "ನಿಮ್ಮ ಬಾಕಿ ಸುಮಾರು ಎರಡು ಲಕ್ಷ ರೂಪಾಯಿ.",  # about two lakh
+        "ನಿಮ್ಮ EMI ಎಂಟು ಸಾವಿರದ ಐನೂರು.",  # eight thousand five hundred
+        "ಐದುಸಾವಿರ ರೂಪಾಯಿ ಕಟ್ಟಬೇಕು.",  # joined: five-thousand
+        "ಒಂದು ಕೋಟಿ ರೂಪಾಯಿ.",
+        "আপনার বকেয়া প্রায় দুই লাখ টাকা।",
+        "আপনার EMI আট হাজার পাঁচশো টাকা।",
+        "আপনার বকেয়া এক লক্ষ টাকা।",
+        "এক কোটি টাকা।",
+    ],
+)
+def test_figures_written_as_kannada_or_bengali_words_are_caught(text):
+    ledger = FigureLedger()
+    ledger.add(EMI_RESULT)
+    assert ledger.unsupported(text) != []
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "ಇದರ ಲಕ್ಷಣ ಏನು ಎಂದು ನೋಡುತ್ತೇನೆ.",  # ಲಕ್ಷಣ: feature, not lakh
+        "ದಯವಿಟ್ಟು ಲಕ್ಷ್ಯ ಕೊಡಿ.",  # ಲಕ್ಷ್ಯ: attention
+        "ಖಂಡಿತ, ನಾನು ಈಗ ನೋಡುತ್ತೇನೆ.",
+        "অনুগ্রহ করে লক্ষ্য করুন।",  # লক্ষ্য: notice
+        "আপনি কবে শোধ করবেন?",  # শোধ: repay, not a hundred
+        "নিশ্চয়ই, আমি এখনই দেখছি।",
+    ],
+)
+def test_everyday_kannada_and_bengali_words_are_not_taken_for_figures(text):
+    assert FigureLedger().unsupported(text) == []
+
+
+@pytest.mark.parametrize(
+    ("heard", "meant"),
+    [
+        # From a real call: the digits 2 2 1 7.
+        ("आखिरी चार अंक दो दो एक साथ हैं", "आखिरी चार अंक दो दो एक सात हैं"),
+        ("नौ आठ साथ छह", "नौ आठ सात छह"),
+        # "एक साथ" is "together", and so is "साथ" anywhere else.
+        ("मैं दोनों EMI एक साथ भर दूँगा", "मैं दोनों EMI एक साथ भर दूँगा"),
+        ("मेरे साथ ऐसा क्यों हुआ", "मेरे साथ ऐसा क्यों हुआ"),
+        ("दो तीन साथी आए थे", "दो तीन साथी आए थे"),  # साथी: companions
+        ("My number is 4821", "My number is 4821"),
+    ],
+)
+def test_a_misheard_hindi_seven_is_put_right_only_among_digits(heard, meant):
+    assert repair_misheard_digits(heard) == meant
 
 
 def test_nothing_is_allowed_before_any_tool_has_run():

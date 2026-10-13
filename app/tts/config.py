@@ -19,6 +19,10 @@ class TTSSettings(BaseSettings):
     # CPU threads per synthesis. 0 lets ONNX Runtime decide.
     piper_threads: int = 0
 
+    # If Piper has produced no audio after this long, or fails, the sentence is spoken
+    # by Sarvam instead. Needs a Sarvam key. 0 turns the fallback off.
+    piper_fallback_after_s: float = 4.0
+
     # Sarvam AI, for Kannada and Bengali. Kept here, not in the frozen core settings.
     sarvam_api_key: str | None = None
     sarvam_model: str = "bulbul:v3"

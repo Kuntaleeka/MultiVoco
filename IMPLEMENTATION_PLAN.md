@@ -452,8 +452,8 @@ Owns `app/agent/`, `app/tools/`. Depends on: Phase 0. Fully testable in text, no
       `openai/gpt-oss-20b`, then Gemini `gemini-3.5-flash-lite` (section 11, note 11).
 - [x] Tools: `verify_identity`, `get_loan_summary`, `get_next_emi`, `get_payment_history`,
       `record_payment_promise`, `request_callback`, `handoff_to_human`
-- [ ] System prompt: short spoken replies, mirrors the caller's language, speaks amounts and
-      dates in a TTS-friendly way
+- [x] System prompt: short spoken replies, mirrors the caller's language, speaks amounts and
+      dates in a TTS-friendly way. Checked live on 2026-10-13 (`docs/agent.md`).
 - [x] Guardrail 1, identity gate: account tools refuse to run until `verify_identity`
       succeeds. Enforced in code, not only in the prompt. Lock after 3 failed attempts.
 - [x] Guardrail 2, tool-only figures: every number in a reply must trace to a tool result
@@ -464,20 +464,31 @@ Owns `app/agent/`, `app/tools/`. Depends on: Phase 0. Fully testable in text, no
       checked sentence at a time, not token by token (section 11, note 1).
       Built for figures written in digits, in all four numeral systems, plus magnitude
       words in English and Hindi. Small numbers written as words are not caught yet.
-- [ ] Guardrail 3, handoff: explicit request, repeated misunderstanding, distress or
+- [x] Guardrail 3, handoff: explicit request, repeated misunderstanding, distress or
       dispute, out-of-scope requests.
-      The code paths are built and tested: the handoff tool, three misses in a row, and
-      the verification lock. Whether a real model calls the tool when it should is not
-      checked yet, and needs the Groq client.
+      Checked live on 2026-10-13: a request for a person, a dispute, and an out-of-scope
+      question each handed off with the right reason, and a plain question did not.
+      Distress was not tried live. Repeated misunderstanding and the verification lock
+      are in code, with tests.
 - [x] Reply language follows the session language passed in by the orchestrator, not
       the model's own guess. Tool names, arguments, and results stay in English.
-- [ ] `[kn]` Kannada: prompt examples, reply quality check on Groq versus Gemini, set
+- [x] `[kn]` Kannada: prompt examples, reply quality check on Groq versus Gemini, set
       the routing entry. Guardrail 2 must recognise Kannada numerals (೦-೯) and numbers
       written out as Kannada words.
-- [ ] `[bn]` Bengali: the same, with Bengali numerals (০-৯) and number words
+      Done, apart from a native speaker's check of the wording. The routing stays on
+      Groq: Gemini timed out on every Kannada turn when compared on 2026-10-13. Number
+      words from a hundred up are caught, smaller ones are not (`docs/agent.md`).
+- [x] `[bn]` Bengali: the same, with Bengali numerals (০-৯) and number words.
+      The same state as Kannada. Gemini took over 15 s a turn, so Bengali stays on Groq.
 - [ ] Identity verification works when the caller reads digits or a date of birth in
       any of the four languages. `verify_identity` finds the customer by `phone_last4`
       plus `dob`, the only identifying fields a caller can say (section 11, note 3).
+      **Open, and not for want of code on the tool side.** Digits and numerals in any of
+      the four scripts work. Words work in English and Bengali. In Hindi a misheard
+      "सात" is now repaired in code, not yet re-run live. In Kannada the model turned a
+      year said in words into the wrong year, which cost the caller an attempt. Closing
+      this needs number words converted to digits in code, per language, with a native
+      speaker for Kannada and Bengali (`docs/agent.md`).
 - [x] `scripts/chat.py`: text REPL against the agent, with `--lang` (workstream G uses this)
 
 Done when: unit tests cover each guardrail in every language, including attempts to
@@ -490,12 +501,13 @@ Owns `app/tts/`. Depends on: Phase 0.
 - [x] Piper wrapper in the executor, streaming PCM chunks, cancellable mid-sentence.
       Audio comes out in 100 ms pieces and a cancel takes effect at the next piece.
       Piper computes a whole sentence at once, so that one job cannot be stopped part-way.
-- [ ] Voice selection for English and Hindi, with the model download handled at build time.
-      Chosen: `en_US-lessac-medium` and `hi_IN-priyamvada-medium`. Not yet listened to
-      by anyone, and the build-time download is H's Dockerfile (section 11, note 11).
-- [ ] Text normalisation: rupee amounts, dates, loan IDs, digits read one at a time.
-      Done: markup, grouping commas, currency signs, trailing ".00", "EMI" spelled out.
-      Not done: dates, loan IDs, digits one at a time.
+- [x] Voice selection for English and Hindi, with the model download handled at build time.
+      Chosen: `en_US-lessac-medium` and `hi_IN-priyamvada-medium`. Garlic's user
+      listened to samples of both on 2026-10-13 and found them good. The Dockerfile
+      downloads them at build time.
+- [x] Text normalisation: rupee amounts, dates, loan IDs, digits read one at a time.
+      Rupees and paise, ISO dates, percentages, and digit strings of seven or more read
+      one at a time. Loan IDs are short and are read as numbers.
 - [x] Warm-up at startup so the first turn is not slow
 - [x] Loaded Piper voices and the Azure client are cached once per process inside
       `app/tts/`. The registered factory only hands out the cached instance, because
@@ -506,17 +518,24 @@ Owns `app/tts/`. Depends on: Phase 0.
       Now Sarvam AI, not Azure (section 11, note 12). The client is built and
       unit-tested in `app/tts/sarvam.py`, and spoke Kannada and Bengali in one real
       request each on 2026-10-13. Not ticked: no native speaker has chosen the voice.
-- [ ] `[kn]` Kannada text normalisation: rupee amounts, dates, digits, English words
-      inside Kannada sentences
-- [ ] `[bn]` Bengali voice and text normalisation on the same Azure client
-- [ ] Azure as a fallback for English and Hindi if Piper fails or is too slow
+- [x] `[kn]` Kannada text normalisation: rupee amounts, dates, digits, English words
+      inside Kannada sentences.
+      Amounts get Indian grouping commas, as Sarvam's docs ask, and ISO dates become
+      words. English words are left to Sarvam's own preprocessing. How it sounds is for
+      the native-speaker listening pass in Phase 3.
+- [x] `[bn]` Bengali voice and text normalisation on the same Azure client.
+      On the Sarvam client, the same as Kannada.
+- [x] Azure as a fallback for English and Hindi if Piper fails or is too slow.
+      Sarvam, not Azure. It takes over a sentence when Piper fails or gives no audio in
+      4 s (`MULTIVOCO_PIPER_FALLBACK_AFTER_S`), and only when a Sarvam key is set.
 - [x] Character-usage counter for Azure, so the free tier is not exhausted mid-demo.
       Built for Sarvam: a daily character cap per process, `MULTIVOCO_SARVAM_DAILY_CHARS`.
       It resets when the process restarts, so it is a brake, not an exact meter.
 - [ ] Benchmark per language: time to first chunk and real-time factor on 2 vCPUs for
       Piper, network time to first chunk for Azure, in `docs/tts.md`.
-      Piper is measured on Garlic's laptop only, in `docs/tts.md`. Still to do: the
-      same run on Render, and Azure.
+      Piper and Sarvam are both measured from Garlic's laptop only, in `docs/tts.md`.
+      Still to do: the same runs on Render (`python -m app.tts.bench` and
+      `python -m app.tts.sample --runs 3`).
 
 Done when: first chunk for a 10-word sentence arrives fast enough for the latency
 target on the host's hardware (Render free: shared CPU, 512 MB) in every language, and cancellation stops synthesis
@@ -779,8 +798,8 @@ audio session, so Garlic is never blocked waiting for Onion's pipeline.
 | Stream | Owner | Status |
 |---|---|---|
 | Phase 0 | Onion | done, contracts frozen |
-| B Agent | Garlic | in progress: tools, guardrails, agent loop, and the Groq and Gemini client, tried live in English, Hindi, and Kannada. Left: `request_callback`, Kannada and Bengali prompt work. |
-| C TTS | Garlic | in progress: Piper for English and Hindi built and benchmarked on a laptop. Left: listening check, Render benchmark, Azure. |
+| B Agent | Garlic | built, 10 of 11 items done. Open: verification from dates and digits said as words, which fails in Kannada (`docs/agent.md`). Native-speaker check of the Kannada and Bengali wording still owed. |
+| C TTS | Garlic | built, 9 of 11 items done: Piper for English and Hindi, Sarvam for Kannada and Bengali, fallback, text clean-up. Open: a native speaker's choice of Sarvam voice, and the benchmark on Render. |
 | E DB + metrics | Garlic | started: session module and seed script only |
 | O Orchestrator | Onion | done on mocks |
 | A VAD + STT + language detection | Onion | VAD, both STT clients, and language detection working against the real services. Open: the streaming ballot, and tuning on recorded human speech. |

@@ -2,8 +2,10 @@
 
 from functools import cache
 
+from app.core.interfaces import TTS
 from app.core.registry import register
 from app.tts.config import get_tts_settings
+from app.tts.fallback import FallbackTTS
 from app.tts.piper import PiperTTS
 from app.tts.sarvam import SarvamTTS, close_client
 
@@ -23,7 +25,16 @@ def sarvam() -> SarvamTTS:
     return SarvamTTS()
 
 
-register("tts", PIPER, lambda lang: piper())
+@cache
+def piper_with_fallback() -> TTS:
+    """What the `piper` route gets: Piper, with Sarvam behind it when there is a key."""
+    settings = get_tts_settings()
+    if settings.sarvam_api_key and settings.piper_fallback_after_s > 0:
+        return FallbackTTS(piper(), sarvam(), settings.piper_fallback_after_s)
+    return piper()
+
+
+register("tts", PIPER, lambda lang: piper_with_fallback())
 register("tts", SARVAM, lambda lang: sarvam())
 
 

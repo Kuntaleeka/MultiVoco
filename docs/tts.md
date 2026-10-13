@@ -10,6 +10,9 @@ Owner: Garlic (workstream C).
 | Sample rate | 22 050 Hz | 22 050 Hz |
 | Model file | 60 MB | 61 MB |
 
+Garlic's user listened to a sample of each on 2026-10-13, with an amount in paise, a
+date, and "EMI" in it, and found them good.
+
 Both are female voices, to match the agent's Hindi ("कर सकती हूँ"). Piper has no Indian
 English voice, so English is a US accent. Piper has no Kannada voice. It has one Bengali
 voice, `bn_BD-google-medium`, with a Bangladesh accent, not tried yet.
@@ -55,9 +58,24 @@ sentence at once, so "first audio" is the time to synthesise the sentence.
 - Audio is handed over in 100 ms pieces. Cancelling a call stops it at the next piece.
   Piper cannot be stopped inside a sentence, so a sentence already being computed
   finishes in the pool and is thrown away.
-- Text is cleaned before speaking (`app/tts/normalize.py`): markup, grouping commas,
-  currency signs, and trailing ".00" are removed, and "EMI" is spelled out. Numbers are
-  left as digits, which Piper reads aloud itself.
+- Text is cleaned before speaking (`app/tts/normalize.py`). Numbers stay as digits,
+  which Piper reads aloud itself. What changes:
+
+  | Written by the agent | Spoken |
+  |---|---|
+  | `8450.00 rupees`, `₹8,450` | 8450 rupees |
+  | `8450.50 rupees` | 8450 rupees 50 paise |
+  | `2026-11-05` | 5 November 2026, with the month in the sentence's language |
+  | `9876543210` (seven digits or more, not an amount) | 9 8 7 6 5 4 3 2 1 0 |
+  | `12.5%` | 12.5 percent |
+  | `EMI` | E M I |
+  | `**bold**` and other markup | removed |
+
+- If Piper fails, or gives no audio within 4 s, the sentence is spoken by Sarvam
+  instead (`app/tts/fallback.py`). That needs a Sarvam key, and never happens once
+  audio has started. Set `MULTIVOCO_PIPER_FALLBACK_AFTER_S=0` to turn it off.
+- `python -m app.tts.sample` writes a sample in each language to `voices/samples/`,
+  for a listening check.
 
 ## Sarvam AI, Kannada and Bengali
 
@@ -73,9 +91,19 @@ India, one ten-word sentence each (about 7.5 s of audio):
 | Kannada (first request, new connection) | 858 ms | 2353 ms |
 | Bengali (second request, connection reused) | 212 ms | 1667 ms |
 
-Two requests are not a benchmark: they show that the voice name `priya` is accepted for
-both languages, that audio arrives as raw PCM while it is still being generated, and
-roughly what to expect. Garlic's user listened to both samples on 2026-10-13 and found
+A second check the same day, with `python -m app.tts.sample --runs 3`, on a two-sentence
+reply of 9 to 11 s of audio, connection already open (median of three):
+
+| | First audio | Whole reply received |
+|---|---|---|
+| Kannada, Sarvam | 261 ms | 2367 ms |
+| Bengali, Sarvam | 316 ms | 2150 ms |
+| English, Piper (for comparison) | 426 ms | 527 ms |
+| Hindi, Piper (for comparison) | 580 ms | 727 ms |
+
+These are from a laptop in India, a handful of requests, not from the deployed host.
+They show that the voice name `priya` is accepted for both languages, that audio
+arrives as raw PCM while it is still being generated, and roughly what to expect. Garlic's user listened to both samples on 2026-10-13 and found
 them good. A native speaker's check of each language is still open.
 
 | | |
@@ -92,16 +120,15 @@ them good. A native speaker's check of each language is still open.
   from spending the credit. It is counted per process and starts again on a restart.
 - Out of credit, over the rate limit, or over the daily cap all raise `QuotaExceeded`,
   which the caller sees as "language unavailable".
-- Sarvam does its own reading of numbers and English words (`enable_preprocessing`), so
-  only markup and trailing ".00" are removed before sending.
+- Sarvam does its own reading of numbers and English words (`enable_preprocessing`).
+  Before sending, amounts get Indian grouping commas (206300 becomes 2,06,300), which
+  its docs ask for, and ISO dates, paise, and long digit strings are reshaped as for
+  Piper.
 - To route Kannada and Bengali to it, set
   `MULTIVOCO_ROUTE_OVERRIDES={"kn": {"tts": "sarvam"}, "bn": {"tts": "sarvam"}}`.
 
 ## Not done yet
 
-- A listening check of both Piper voices, and of Hindi sentences with English words in them.
-- Reading loan IDs and phone digits one at a time, and dates.
 - A native speaker's choice of Sarvam voice for Kannada and for Bengali, and a proper
   timing run from the deployed host.
-- Sarvam as a fallback for English and Hindi when Piper fails.
 - The Piper benchmark on Render.

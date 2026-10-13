@@ -19,6 +19,7 @@ from app.agent.guardrails import (
     SentenceBuffer,
     identity_details_not_given,
     plain_spaces,
+    repair_misheard_digits,
     starts_other_speaker,
     without_own_label,
     wrong_language,
@@ -97,6 +98,7 @@ class LoanAgent:
     async def respond(self, user_text: str, ctx: CallContext) -> AsyncIterator[AgentEvent]:
         # A turn the orchestrator never committed was not heard: keep its facts, not its reply.
         self.history.extend(self._pending)
+        user_text = repair_misheard_digits(user_text)
         self._pending = [Message("user", user_text)]
         self._first_token_sent = False
 

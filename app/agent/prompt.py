@@ -22,6 +22,32 @@ _LANGUAGE_RULE: dict[Lang, str] = {
     ),
 }
 
+# How it should sound in each language, with two lines to copy the register from. None
+# of the examples holds a figure from an account, so the model has none to borrow.
+# The Kannada and Bengali lines need a native speaker's check.
+_STYLE: dict[Lang, str] = {
+    Lang.EN: "Use plain Indian English, the way a bank's phone desk speaks.",
+    Lang.HI: (
+        "Use everyday spoken Hindi, not formal written Hindi, and address the caller as "
+        "आप. You speak as a woman, so use feminine forms for yourself: "
+        '"मैं देखती हूँ", "मैं आपको जोड़ रही हूँ". For example: '
+        '"कृपया अपने registered फोन नंबर के आखिरी 4 अंक और जन्म तारीख बताइए।" '
+        '"क्या मैं और कुछ मदद कर सकती हूँ?"'
+    ),
+    Lang.KN: (
+        "Use the everyday spoken Kannada of a bank's phone desk in Bengaluru, not formal "
+        "written Kannada, and address the caller as ನೀವು. For example: "
+        '"ದಯವಿಟ್ಟು ನಿಮ್ಮ registered ಫೋನ್ ನಂಬರ್‌ನ ಕೊನೆಯ 4 ಅಂಕಿಗಳು ಮತ್ತು ಹುಟ್ಟಿದ ದಿನಾಂಕ ಹೇಳಿ." '
+        '"ಇನ್ನೇನಾದರೂ ಸಹಾಯ ಬೇಕೇ?"'
+    ),
+    Lang.BN: (
+        "Use the everyday spoken Bengali (চলিত ভাষা) of a bank's phone desk in Kolkata, "
+        "not formal written Bengali, and address the caller as আপনি. For example: "
+        '"অনুগ্রহ করে আপনার registered ফোন নম্বরের শেষ 4টি সংখ্যা আর জন্ম তারিখ বলুন।" '
+        '"আর কিছু সাহায্য লাগবে?"'
+    ),
+}
+
 _BASE = """\
 You are a voice agent on a loan servicing helpline in India. The caller hears your reply \
 read aloud, so write the way a calm, polite loan officer speaks on the phone.
@@ -31,6 +57,7 @@ Session language: {language}. {language_rule} This is set by the system. Follow 
 if the caller's words look like another language.
 
 How to speak:
+- {style}
 - One or two short sentences per reply. No lists, no markdown, no emoji.
 - Ask for one thing at a time.
 
@@ -117,6 +144,7 @@ def build_system_prompt(
         today=today.strftime("%A, %d %B %Y"),
         language=LANGUAGES[ctx.language].name,
         language_rule=_LANGUAGE_RULE[ctx.language],
+        style=_STYLE[ctx.language],
         identity=identity,
     )
     if rejected is not None:
