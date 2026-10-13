@@ -167,3 +167,65 @@ async def test_it_drives_a_whole_turn_in_the_pipeline(deepgram, stt_settings, mo
     assert (user[-1]["final"], user[-1]["text"]) == (True, "When is my next EMI due?")
     assert rig.trace(1).user_text == "When is my next EMI due?"
     await rig.session.teardown()
+
+
+async def test_a_stalled_connection_fails_instead_of_blocking_the_caller(deepgram, stt_settings):
+    """If Deepgram stops taking audio, send_audio must not wait: the caller's audio loop
+    runs through it. The queue fills, and that is reported as a failure."""
+    stt = DeepgramSTT("k", stt_settings.model_copy(update={"deepgram_max_queued_frames": 8}))
+    await stt.start(Lang.EN)
+    stalled = asyncio.Event()
+
+    async def never_sends(data) -> None:
+        await stalled.wait()
+
+    stt._send = never_sends
+    began = asyncio.get_running_loop().time()
+    with pytest.raises(ProviderError, match="not taking audio"):
+        for _ in range(20):
+            await stt.send_audio(FRAME)
+    assert asyncio.get_running_loop().time() - began < 0.5
+    with pytest.raises(ProviderError):  # and it stays failed
+        await stt.send_audio(FRAME)
+    stalled.set()
+    await stt.close()
+
+
+async def test_strict_mode_raises_when_a_flush_goes_unanswered(deepgram, stt_settings):
+    deepgram.ignore_finalize = True
+    settings = stt_settings.model_copy(update={"finalize_timeout_seconds": 0.1})
+    stt = DeepgramSTT("k", settings, strict=True)
+    await stt.start(Lang.EN)
+    await speak(stt)
+    with pytest.raises(ProviderError, match="flush"):
+        await collect_until_final(stt)
+    await stt.close()
+
+
+async def test_behind_a_fallback_an_unanswered_flush_is_redone_by_the_other_stt(
+    deepgram, stt_settings
+):
+    from app.core.mocks import MockSTT
+    from app.stt.fallback import FallbackSTT
+
+    deepgram.ignore_finalize = True
+    settings = stt_settings.model_copy(update={"finalize_timeout_seconds": 0.1})
+    whisper = MockSTT(["When is my next EMI due?"])
+    stt = FallbackSTT(DeepgramSTT("k", settings, strict=True), lambda: whisper)
+    await stt.start(Lang.EN)
+    await speak(stt)
+    transcripts = await collect_until_final(stt)
+    assert transcripts[-1].text == "When is my next EMI due?"  # whole, not "When is my"
+    assert stt.on_fallback
+    await stt.close()
+
+
+async def test_close_does_not_wait_on_a_peer_that_will_not_hang_up(deepgram, stt_settings):
+    stt = DeepgramSTT("k", stt_settings.model_copy(update={"close_timeout_seconds": 0.1}))
+    await stt.start(Lang.EN)
+
+    async def never(*args, **kwargs) -> None:
+        await asyncio.Event().wait()
+
+    stt._ws.close = never
+    await asyncio.wait_for(stt.close(), 1.0)

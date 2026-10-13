@@ -12,7 +12,7 @@ from app.stt.groq_whisper import GroqWhisperSTT, close_client
 def _deepgram(lang: Lang) -> STT:
     """Deepgram, backed by Whisper when a Groq key is there to back it with."""
     if get_settings().groq_api_key:
-        return FallbackSTT(DeepgramSTT(), GroqWhisperSTT)
+        return FallbackSTT(DeepgramSTT(strict=True), GroqWhisperSTT)
     return DeepgramSTT()
 
 

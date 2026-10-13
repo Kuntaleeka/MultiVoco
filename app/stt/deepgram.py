@@ -33,10 +33,24 @@ class _Flush:
 
 
 class DeepgramSTT(QueueSTT):
-    def __init__(self, api_key: str | None = None, settings: STTSettings | None = None) -> None:
+    def __init__(
+        self,
+        api_key: str | None = None,
+        settings: STTSettings | None = None,
+        strict: bool = False,
+    ) -> None:
+        """`strict` is for use behind a fallback: when Deepgram does not answer a flush
+        in time, raise instead of passing off a transcript that may be cut short."""
         super().__init__()
         self._key = api_key if api_key is not None else get_settings().deepgram_api_key
         self._s = settings or get_stt_settings()
+        self._strict = strict
+        # Audio waits here for the writer task, so a stalled connection can never hold
+        # up the caller's audio loop. If it fills, Deepgram is not keeping up.
+        self._outbox: asyncio.Queue[bytes | str] = asyncio.Queue(
+            maxsize=self._s.deepgram_max_queued_frames
+        )
+        self._broken: ProviderError | None = None
         self._ws: websockets.ClientConnection | None = None
         self._tasks: list[asyncio.Task] = []
         self._closing = False
@@ -45,6 +59,7 @@ class DeepgramSTT(QueueSTT):
         self._confidences: list[float] = []
         self._interim = ""  # the latest not-yet-final piece
         self._flushes: deque[_Flush] = deque()
+        self._writer: asyncio.Task | None = None
 
     # --- Connection --------------------------------------------------------------
 
@@ -96,6 +111,25 @@ class DeepgramSTT(QueueSTT):
                 self._ws = None
                 if attempt == 2:
                     raise ProviderError(f"Deepgram connection lost: {error}") from error
+
+    def _enqueue(self, item: bytes | str) -> None:
+        if self._broken is not None:
+            raise self._broken
+        try:
+            self._outbox.put_nowait(item)
+        except asyncio.QueueFull:
+            self._broken = ProviderError("Deepgram is not taking audio fast enough")
+            raise self._broken from None
+
+    async def _write(self) -> None:
+        while True:
+            item = await self._outbox.get()
+            try:
+                await self._send(item)
+            except ProviderError as error:
+                self._broken = error
+                self._fail(error)
+                return
 
     async def _keep_alive(self, ws: websockets.ClientConnection) -> None:
         interval = self._s.deepgram_keepalive_seconds
@@ -160,10 +194,17 @@ class DeepgramSTT(QueueSTT):
 
     async def _give_up_waiting(self, flush: _Flush) -> None:
         await asyncio.sleep(self._s.finalize_timeout_seconds)
-        if not flush.done:
-            log.warning("Deepgram did not answer Finalize in time")
-            if flush in self._flushes:
-                self._flushes.remove(flush)
+        if flush.done:
+            return
+        log.warning("Deepgram did not answer Finalize in time")
+        if flush in self._flushes:
+            self._flushes.remove(flush)
+        if self._strict:
+            # What has arrived may be missing its last words. Let the fallback redo it.
+            flush.done = True
+            self._broken = ProviderError("Deepgram did not answer a flush in time")
+            self._fail(self._broken)
+        else:
             self._complete(flush)
 
     # --- STT interface -----------------------------------------------------------
@@ -171,32 +212,36 @@ class DeepgramSTT(QueueSTT):
     async def start(self, language: Lang) -> None:
         self._language = language
         await self._connect()
+        self._writer = asyncio.create_task(self._write())
 
     async def send_audio(self, frame: bytes) -> None:
-        await self._send(frame)
+        self._enqueue(frame)
 
     async def finish(self) -> None:
         flush = _Flush()
         self._flushes.append(flush)
         try:
-            await self._send(json.dumps({"type": "Finalize"}))
+            self._enqueue(json.dumps({"type": "Finalize"}))
         except ProviderError:
             self._flushes.remove(flush)
-            self._complete(flush)  # the contract: every finish() gets one final
+            if not self._strict:
+                self._complete(flush)  # the contract: every finish() gets one final
             raise
         self._tasks.append(asyncio.create_task(self._give_up_waiting(flush)))
 
     async def close(self) -> None:
         self._closing = True
         ws, self._ws = self._ws, None
-        for task in self._tasks:
+        tasks = [*self._tasks, *([self._writer] if self._writer is not None else [])]
+        for task in tasks:
             task.cancel()
-        await asyncio.gather(*self._tasks, return_exceptions=True)
+        await asyncio.gather(*tasks, return_exceptions=True)
         self._tasks = []
         if ws is not None:
             try:
-                await ws.send(json.dumps({"type": "CloseStream"}))
-                await ws.close()
-            except (ConnectionClosed, OSError):
-                pass
+                async with asyncio.timeout(self._s.close_timeout_seconds):
+                    await ws.send(json.dumps({"type": "CloseStream"}))
+                    await ws.close()
+            except (ConnectionClosed, OSError, TimeoutError):
+                ws.transport.abort()  # do not make the end of a call wait on a slow peer
         self._out.put_nowait(None)

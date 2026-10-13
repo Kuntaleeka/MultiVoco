@@ -668,6 +668,10 @@ to fix what breaks.
 2. [ ] Onion (O + A): real VAD and STT. Done and run end to end on 2026-10-11.
        Left open for tuning the end-of-speech silence on real callers.
 3. [ ] **Joint** (O + B): real agent. First full text-in, text-out call.
+       Ran once on 2026-10-11 in Hindi with the real VAD, Deepgram, and Garlic's agent,
+       and a tone for the voice: the caller asked about their EMI, and the agent asked
+       for the phone digits and date of birth. To repeat with the machine awake before
+       ticking: the timings from that run are not valid (section 12, note 18).
 4. [ ] **Joint** (O + C): real TTS. **First real voice call, in English/Hindi (milestone M2).**
 5. [ ] **Joint** (O + A + B + C): Kannada route end to end with a manual language choice.
        **First Kannada call (milestone M2k).**
@@ -768,10 +772,6 @@ audio session, so Garlic is never blocked waiting for Onion's pipeline.
 | Stream | Owner | Status |
 |---|---|---|
 | Phase 0 | Onion | done, contracts frozen |
-| O Orchestrator | Onion | done on mocks, 128 tests passing in total |
-| A VAD + STT + language detection | Onion | not started |
-| D Browser client | Onion | written, needs a check in a real browser |
-| H Deploy | Onion | Dockerfile and `render.yaml` written, service not created yet |
 | B Agent | Garlic | in progress: tools, guardrails, agent loop, and the Groq and Gemini client, tried live in English, Hindi, and Kannada. Left: `request_callback`, Kannada and Bengali prompt work. |
 | C TTS | Garlic | in progress: Piper for English and Hindi built and benchmarked on a laptop. Left: listening check, Render benchmark, Azure. |
 | E DB + metrics | Garlic | started: session module and seed script only |
@@ -779,9 +779,6 @@ audio session, so Garlic is never blocked waiting for Onion's pipeline.
 | A VAD + STT + language detection | Onion | VAD, both STT clients, and language detection working against the real services. Open: the streaming ballot, and tuning on recorded human speech. |
 | D Browser client | Onion | working on the deployed service. A few checks not yet reported. |
 | H Deploy | Onion | mock pipeline live on Render. Limits, secrets, and wake-up handling to come. |
-| B Agent | Garlic | not started |
-| C TTS | Garlic | not started |
-| E DB + metrics | Garlic | not started |
 | F Dashboard | Garlic | not started |
 | G Evals | Garlic | not started |
 
@@ -1154,3 +1151,31 @@ Added to "What Garlic needs to do":
     - **The script-based switch is a weak safety net.** A recogniser set to the wrong
       language writes in its own script, so a wrong first guess is mostly corrected by
       the caller using the picker. The eval scenarios in G should include that.
+
+18. **After merging Garlic's agent and Piper** (2026-10-11). For Garlic:
+    - **`uv.lock` was broken by the merge** and no longer parsed (two copies of several
+      packages, from a hand merge). Onion rebuilt it from `main`'s lock with `uv lock`.
+      Next time: take either side's `uv.lock` whole, then run `uv lock`.
+    - **The status table in section 8 had every row twice** after the merge. Onion kept
+      the newer row for each stream and left Garlic's wording as it was.
+    - **`test_a_package_that_does_not_exist_yet_is_skipped`** now uses a made-up
+      package name, as note 11 in section 11 suggested, so it no longer depends on
+      which packages exist.
+    - **The first call with the real agent in the pipeline worked**, in Hindi, with a
+      tone for the voice: the agent's first reply was the identity question. Piper is
+      not installed on Onion's machine yet, so the first real voice call (M2) has not
+      been tried.
+    - **Do not use any timing from Onion's runs on the afternoon of 2026-10-11.** The
+      laptop was asleep on battery and running in short wake-ups, which stretched
+      every timer. That, not the services, caused the slow replies and cut-off
+      transcripts seen that afternoon. The figures in `docs/stt.md` and
+      `docs/langid.md` are from the morning and are not affected.
+    - **Three changes to the Deepgram client**, made while chasing the above. They
+      are sound on their own and are tested:
+      audio is queued for a writer task, so a stalled connection can no longer hold
+      up the call's audio loop (a full queue counts as a failure); when Deepgram does
+      not answer a flush in time and Whisper is there as a fallback, the utterance is
+      redone by Whisper, not passed on cut short; and closing a connection waits at
+      most a second.
+    - **For H, from note 11 in section 11:** the Dockerfile still needs the voice
+      download step and the Render benchmark. Not done yet.

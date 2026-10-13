@@ -24,6 +24,11 @@ class STTSettings(BaseSettings):
     deepgram_keepalive_seconds: float = 4.0
     # How long to wait for the last words after asking Deepgram to flush.
     finalize_timeout_seconds: float = 1.5
+    # Audio frames allowed to wait for a slow connection before Deepgram counts as
+    # failed. 64 frames is about two seconds of speech.
+    deepgram_max_queued_frames: int = 64
+    # Longest wait for the closing handshake when a call ends.
+    close_timeout_seconds: float = 1.0
     connect_timeout_seconds: float = 5.0
 
     groq_url: str = "https://api.groq.com/openai/v1/audio/transcriptions"
