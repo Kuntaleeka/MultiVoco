@@ -103,6 +103,9 @@ class STT(Protocol):
 class LangGuess:
     lang: Lang | None  # None means "no evidence"
     confidence: float  # 0.0 to 1.0
+    # A detector that transcribes in order to detect can hand the transcript over, and
+    # the utterance then does not need transcribing a second time.
+    text: str | None = None
 
 
 @runtime_checkable
