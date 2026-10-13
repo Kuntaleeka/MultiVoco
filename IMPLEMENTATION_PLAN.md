@@ -638,8 +638,10 @@ pipeline can be deployed long before real providers are wired in.
       **Not built here: this machine has no Docker.** The first build on Render is the test.
 - [x] Render service created from the Blueprint, the Dockerfile built there, and a
       call made on the public link (2026-10-09)
-- [ ] Dockerfile: Piper voices and Silero weights baked in at build time, on ONNX
-      Runtime with no PyTorch, and measured to fit in 512 MB
+- [x] Dockerfile: Piper voices and Silero weights baked in at build time, on ONNX
+      Runtime with no PyTorch. Not built anywhere yet: Render's next build is the test.
+- [ ] **Measure memory on Render with both voices loaded.** On Onion's Mac the full
+      pipeline used 510 to 570 MB, which is over Render's 512 MB (section 12, note 19).
 - [ ] Secrets set in the Render dashboard (provider keys, the Azure Speech key and region)
 - [ ] Azure Speech resource created in the region closest to the host (Southeast Asia, for Singapore)
 - [ ] Daily usage caps for Azure characters and Whisper audio, with a clear message
@@ -667,12 +669,11 @@ to fix what breaks.
 1. [x] Onion (O + D): real browser against the mock pipeline, including barge-in
 2. [ ] Onion (O + A): real VAD and STT. Done and run end to end on 2026-10-11.
        Left open for tuning the end-of-speech silence on real callers.
-3. [ ] **Joint** (O + B): real agent. First full text-in, text-out call.
-       Ran once on 2026-10-11 in Hindi with the real VAD, Deepgram, and Garlic's agent,
-       and a tone for the voice: the caller asked about their EMI, and the agent asked
-       for the phone digits and date of birth. To repeat with the machine awake before
-       ticking: the timings from that run are not valid (section 12, note 18).
-4. [ ] **Joint** (O + C): real TTS. **First real voice call, in English/Hindi (milestone M2).**
+3. [x] **Joint** (O + B): real agent. First full text-in, text-out call.
+4. [x] **Joint** (O + C): real TTS. **First real voice call, in English/Hindi (milestone M2).**
+       Run on 2026-10-13, on Onion's laptop: a three-turn call in English and a
+       two-turn call in Hindi, with every component real except the trace sink.
+       Results in section 12, note 19.
 5. [ ] **Joint** (O + A + B + C): Kannada route end to end with a manual language choice.
        **First Kannada call (milestone M2k).**
 6. [ ] Onion (O + A): auto-detection across English, Hindi, and Kannada, including a mid-call switch.
@@ -788,7 +789,7 @@ audio session, so Garlic is never blocked waiting for Onion's pipeline.
 |---|---|---|
 | M0 | Phase 0 merged, mock test green | Both devices can build against the contracts |
 | M1 | Browser talks to the mock pipeline on the public Render link, barge-in works. **Reached 2026-10-09.** | Transport, cancellation, and hosting are sound |
-| M2 | First real voice call in English/Hindi, locally | All four providers work together |
+| M2 | First real voice call in English/Hindi, locally. **Reached 2026-10-13.** | All four providers work together |
 | M2k | First real Kannada call, manual language choice | The second provider route works |
 | M3 | Auto-detection working, real pipeline deployed, traces in the dashboard | Latency is measured per language, not guessed |
 | M4 | Eval run for English/Hindi and Kannada published in the README | The numbers that carry the project exist |
@@ -1179,3 +1180,94 @@ Added to "What Garlic needs to do":
       most a second.
     - **For H, from note 11 in section 11:** the Dockerfile still needs the voice
       download step and the Render benchmark. Not done yet.
+
+19. **M2: the first real voice calls worked** (2026-10-13, Onion's laptop, awake this
+    time). Real VAD, Deepgram, Garlic's agent on Groq, and Piper. The caller was the
+    Mac's built-in voice playing recordings in real time.
+
+    English, as Asha Rao:
+
+    | Caller | Agent | First audio after the caller stopped |
+    |---|---|---|
+    | (call starts) | Hello, this is the loan helpline. How can I help you today? | |
+    | Hi. When is my next EMI due? | May I have the last four digits of your registered phone number, please? | 1.6 s |
+    | The last four digits are 4821, and my date of birth is the 04/12/1990. | Your next EMI of 4150.00 rupees is due on 25 October 2026. | 2.8 s, with two tool calls |
+
+    Hindi, as सुनीता शर्मा:
+
+    | Caller | Agent | First audio after the caller stopped |
+    |---|---|---|
+    | (call starts) | नमस्ते, यह लोन हेल्पलाइन है। मैं आपकी क्या मदद कर सकती हूँ? | |
+    | नमस्ते, मेरी अगली EMI कब है? | कृपया अपने पंजीकृत मोबाइल नंबर के अंतिम 4 अंक और जन्म तिथि बताइए। | 1.6 s |
+    | मेरे phone के आखिरी चार अंक दो दो एक **साथ** हैं, और जन्म तिथि बीस जनवरी उन्नीस सौ बयासी है. | माफ़ कीजिए, मैं यह पक्का नहीं कर पाई। क्या आप एक बार फिर बताएँगे? | 3.2 s |
+
+    The agent's audio was saved and played back into Deepgram, which heard every line
+    correctly in both languages, so Piper's speech is intelligible. Nobody has
+    listened to it yet: that is still Garlic's open voice check.
+
+    What this shows, for Garlic:
+    - **The identity gate and the figure guardrail worked in a real call.** No account
+      detail was given before verification, and the EMI figure came from a tool.
+    - **Hindi verification failed on a mishearing.** The caller said "सात" (seven) and
+      Deepgram wrote "साथ" (with), so the digits were incomplete and the agent gave the
+      safe reply. That is the right behaviour, but it will happen often. For B: accept
+      digits spoken as Hindi words, treat "साथ" as "सात" where a digit is expected, and
+      read the digits back for the caller to confirm. For G: put spoken digits and
+      dates in every language's test set.
+    - **Dates arrive in American order.** Deepgram's formatting turned "the twelfth of
+      April nineteen ninety" into "04/12/1990". Verification passed, so the agent read
+      it as April. For B: make sure a date is never read day-first, or have Onion turn
+      Deepgram's date formatting off so the words arrive as spoken. Say which.
+    - **Latency so far:** 1.6 s to first audio on a plain turn, about 3 s on a turn with
+      tool calls. Of the 1.6 s, about 0.75 s is the VAD's end-of-speech wait plus
+      Deepgram's flush (`docs/stt.md`), which leaves about 0.85 s for the LLM, the
+      sentence check, and Piper. The dashboard will split that properly once the trace
+      sink is real.
+    - **Memory is a problem for Render.** The server used 510 to 570 MB on the Mac with
+      Silero and both Piper voices loaded and in use, against Garlic's 240 MB for the
+      voices alone. Render's free plan has 512 MB. The Mac figure may not match Linux,
+      so the next step is to measure on Render. If it does not fit: load only one
+      voice at a time, or move Hindi to Azure and keep one Piper voice.
+    - **A pause still splits a sentence.** "Thanks. And how much is the EMI?" was
+      answered at "Thanks." because the pause after it was over 500 ms. Tuning for
+      stage 5.
+
+20. **A bug seen in a real call: the agent ran on, repeating itself, with no spaces
+    between sentences** (2026-10-13). After the caller gave their date of birth, one
+    reply read: "Could you also provide your date of birth?Sure, please tell me your
+    date of birth.User:Apologies, I didn't catch that. Could you please repeat your
+    date of birth?I'm sorry, I'm still missing..." and so on until the caller cut in.
+    Onion reproduced it in text mode with `registry.get_agent` and the real LLM.
+
+    Three causes, all in workstream B:
+    - **The model leaves out the space after a sentence.** Both Groq models do it:
+      the main one wrote "...due on 23 October 2026.Is there anything else I can assist
+      you with today?". `SentenceBuffer` in `app/agent/guardrails.py` ends a sentence
+      only when whitespace follows, so it saw the two as one sentence.
+    - **So the rules that stop a reply never fired.** "A question ends the reply"
+      checks whether the sentence ends in "?", and the run-together sentence ended in
+      a full stop. `MAX_SENTENCES` counted four of these blobs, not four sentences.
+      The guardrails also judged each blob as one sentence.
+    - **The backup model writes both sides of the conversation.** The run-on reply came
+      from `openai/gpt-oss-20b`, used because the main model was over its 8000 tokens
+      a minute after a few test calls. It wrote "User:" lines and answered them, and
+      those were spoken aloud. On the main model, once the limit had reset, the same
+      conversation gave clean one-sentence replies.
+
+    Asked of Garlic:
+    - Split sentences without needing whitespace. Onion's splitter now does this
+      (`app/pipeline/splitter.py`, `_starts_sentence`): a letter straight after "?" or
+      "!" starts a new sentence, and so does a capital or a non-Latin letter straight
+      after a full stop. A digit or a small Latin letter after a full stop does not,
+      which keeps "8,450.50" and "example.com" whole. The same rule would fit
+      `SentenceBuffer`.
+    - Stop the reply at a speaker label ("User:", "Caller:", "Assistant:", "Agent:"),
+      and do not speak it.
+    - Decide what to do when the main model is rate-limited. The 20b model is not safe
+      to put in front of a caller as it is. Setting `MULTIVOCO_GROQ_BACKUP_MODEL=` to
+      empty skips it and goes to Gemini.
+    - Add the run-on text above as a test case.
+
+    What Onion changed: only its own splitter, with tests. That alone does not fix the
+    call: the agent still releases the extra sentences. Onion has not touched
+    `app/agent/`.

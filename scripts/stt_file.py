@@ -5,7 +5,7 @@
     uv run python -m scripts.stt_file clip.wav --lang en --json
 
 The file is sent in 32 ms frames at real-time speed, so the timings are what a caller
-would see. --fast sends it as fast as possible instead. The last line of output is the
+would see. --fast sends it at eight times real time instead. The last line of output is the
 final transcript, or a JSON object with --json.
 
 Needs the provider's key in the environment or .env. Any 16-bit WAV is accepted and
@@ -95,8 +95,9 @@ async def transcribe_file(path: Path, lang: Lang, provider: str, fast: bool, qui
     try:
         for frame in frames(pcm):
             await stt.send_audio(frame)
-            if not fast:
-                await asyncio.sleep(FRAME_MS / 1000)
+            # Even --fast is paced, at eight times real time: a streaming recogniser
+            # treats audio arriving faster than it can take it as a failure.
+            await asyncio.sleep(FRAME_MS / 1000 / (8 if fast else 1))
         speech_end = time.perf_counter()
         await stt.finish()
         await asyncio.wait_for(reader, 30)
