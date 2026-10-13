@@ -5,8 +5,10 @@ from functools import cache
 from app.core.registry import register
 from app.tts.config import get_tts_settings
 from app.tts.piper import PiperTTS
+from app.tts.sarvam import SarvamTTS, close_client
 
 PIPER = "piper"
+SARVAM = "sarvam"
 
 
 @cache
@@ -15,7 +17,14 @@ def piper() -> PiperTTS:
     return PiperTTS()
 
 
+@cache
+def sarvam() -> SarvamTTS:
+    """Shared too, so the day's character count covers every call."""
+    return SarvamTTS()
+
+
 register("tts", PIPER, lambda lang: piper())
+register("tts", SARVAM, lambda lang: sarvam())
 
 
 async def startup() -> None:
@@ -24,4 +33,8 @@ async def startup() -> None:
         await piper().warm_up()
 
 
-__all__ = ["PIPER", "PiperTTS", "piper", "startup"]
+async def shutdown() -> None:
+    await close_client()
+
+
+__all__ = ["PIPER", "SARVAM", "PiperTTS", "SarvamTTS", "piper", "sarvam", "shutdown", "startup"]

@@ -37,3 +37,10 @@ def normalize(text: str, lang: Lang) -> str:
     for word, spoken in _SPELL_OUT.get(lang, {}).items():
         text = re.sub(rf"\b{word}\b", spoken, text)
     return _SPACES.sub(" ", text).strip()
+
+
+def clean(text: str) -> str:
+    """The language-neutral part, for a cloud voice that reads numbers and currency itself."""
+    text = _MARKUP.sub(" ", to_ascii_digits(text))
+    text = _WHOLE.sub(r"\1", text)  # 8450.00 -> 8450
+    return _SPACES.sub(" ", text).strip()

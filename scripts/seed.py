@@ -17,7 +17,7 @@ from decimal import Decimal
 from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.db.models import Base, Customer, Loan, Payment
+from app.db.models import Base, Callback, Customer, Loan, Payment
 from app.db.session import dispose_engine, get_engine, get_session_factory
 
 # (name, language, phone_last4, date of birth)
@@ -98,7 +98,7 @@ def build(today: date) -> list[Customer]:
 async def seed(session: AsyncSession, today: date, *, reset: bool = False) -> int:
     """Seed if the customers table is empty, or after wiping it. Returns customers added."""
     if reset:
-        for table in (Payment, Loan, Customer):
+        for table in (Callback, Payment, Loan, Customer):
             await session.execute(delete(table))
     elif await session.scalar(select(func.count()).select_from(Customer)):
         return 0

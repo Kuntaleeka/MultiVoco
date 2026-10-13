@@ -102,3 +102,18 @@ class ToolCallRow(Base):
     duration_ms: Mapped[float]
 
     turn: Mapped[Turn] = relationship(back_populates="tool_calls")
+
+
+class Callback(Base):
+    """A caller's request to be phoned back. Written by the request_callback tool."""
+
+    __tablename__ = "callbacks"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    customer_id: Mapped[int] = mapped_column(ForeignKey("customers.id"), index=True)
+    # Not a foreign key: the call's own row is written later, by the trace recorder.
+    call_id: Mapped[str] = mapped_column(String(36), index=True)
+    requested_for: Mapped[date] = mapped_column(Date)
+    time_of_day: Mapped[str | None] = mapped_column(String(16))  # "morning", "afternoon", "evening"
+    note: Mapped[str] = mapped_column(Text, default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))

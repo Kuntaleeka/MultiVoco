@@ -59,9 +59,48 @@ sentence at once, so "first audio" is the time to synthesise the sentence.
   currency signs, and trailing ".00" are removed, and "EMI" is spelled out. Numbers are
   left as digits, which Piper reads aloud itself.
 
+## Sarvam AI, Kannada and Bengali
+
+Sarvam took Azure Speech's place on 2026-10-13, because Azure needs a card to sign up.
+The client is `app/tts/sarvam.py`. The table is from Sarvam's documentation, read on
+2026-10-13.
+
+Checked with one real request per language on 2026-10-13, from Garlic's laptop in
+India, one ten-word sentence each (about 7.5 s of audio):
+
+| | First audio | Whole sentence received |
+|---|---|---|
+| Kannada (first request, new connection) | 858 ms | 2353 ms |
+| Bengali (second request, connection reused) | 212 ms | 1667 ms |
+
+Two requests are not a benchmark: they show that the voice name `priya` is accepted for
+both languages, that audio arrives as raw PCM while it is still being generated, and
+roughly what to expect. Nobody has judged how the voices sound yet.
+
+| | |
+|---|---|
+| Endpoint | `POST https://api.sarvam.ai/text-to-speech/stream`, key in `api-subscription-key` |
+| Model | `bulbul:v3` (`MULTIVOCO_SARVAM_MODEL`) |
+| Voice | `priya` (`MULTIVOCO_SARVAM_SPEAKER`), not chosen by a native speaker yet |
+| Languages | `kn-IN`, `bn-IN`, and also `hi-IN`, `en-IN` |
+| Audio | raw PCM16 (`linear16`) at 22 050 Hz, the same as Piper |
+| Free credit | ₹1,000 once, on signup. At ₹30 per 10,000 characters that is about 330,000 characters. |
+| Rate limit | 60 requests a minute on the starter plan |
+
+- A daily cap, `MULTIVOCO_SARVAM_DAILY_CHARS` (30,000 by default), stops one busy day
+  from spending the credit. It is counted per process and starts again on a restart.
+- Out of credit, over the rate limit, or over the daily cap all raise `QuotaExceeded`,
+  which the caller sees as "language unavailable".
+- Sarvam does its own reading of numbers and English words (`enable_preprocessing`), so
+  only markup and trailing ".00" are removed before sending.
+- To route Kannada and Bengali to it, set
+  `MULTIVOCO_ROUTE_OVERRIDES={"kn": {"tts": "sarvam"}, "bn": {"tts": "sarvam"}}`.
+
 ## Not done yet
 
-- A listening check of both voices, and of Hindi sentences with English words in them.
+- A listening check of both Piper voices, and of Hindi sentences with English words in them.
 - Reading loan IDs and phone digits one at a time, and dates.
-- Azure Speech for Kannada and Bengali, and as a fallback for English and Hindi.
-- The benchmark on Render.
+- A native speaker's choice of Sarvam voice for Kannada and for Bengali, and a proper
+  timing run from the deployed host.
+- Sarvam as a fallback for English and Hindi when Piper fails.
+- The Piper benchmark on Render.

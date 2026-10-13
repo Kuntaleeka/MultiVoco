@@ -258,6 +258,9 @@ reported per language, since the routes use different providers.
   requested_lang, final_lang)
 - `turns` (id, call_id, idx, language, user_text, agent_text, interrupted, ms_played, trace JSON)
 - `tool_calls` (id, turn_id, name, args JSON, result JSON, duration_ms)
+- `callbacks` (id, customer_id, call_id, requested_for, time_of_day, note, created_at).
+  Added by Garlic on 2026-10-11, agreed in section 12 note 9. `call_id` is not a foreign
+  key, because the call's own row is written later, by the trace recorder.
 
 All loan data is synthetic. Seed script: `scripts/seed.py`. Seed customers cover all
 four languages, with names typical of each.
@@ -396,10 +399,8 @@ Owns `app/agent/`, `app/tools/`. Depends on: Phase 0. Fully testable in text, no
 - [x] Groq streaming client with tool calling, retries, timeout, Gemini as backup.
       Models, checked live on 2026-10-11: `openai/gpt-oss-120b`, then
       `openai/gpt-oss-20b`, then Gemini `gemini-3.5-flash-lite` (section 11, note 11).
-- [ ] Tools: `verify_identity`, `get_loan_summary`, `get_next_emi`, `get_payment_history`,
-      `record_payment_promise`, `request_callback`, `handoff_to_human`.
-      Six of the seven are built and tested. `request_callback` waits on the `callbacks`
-      table (section 11, note 9).
+- [x] Tools: `verify_identity`, `get_loan_summary`, `get_next_emi`, `get_payment_history`,
+      `record_payment_promise`, `request_callback`, `handoff_to_human`
 - [ ] System prompt: short spoken replies, mirrors the caller's language, speaks amounts and
       dates in a TTS-friendly way
 - [x] Guardrail 1, identity gate: account tools refuse to run until `verify_identity`
@@ -451,11 +452,16 @@ Owns `app/tts/`. Depends on: Phase 0.
 - [ ] `[kn]` Azure Speech client with streaming output and cancellation, Kannada voice
       chosen with a native speaker. **Start this straight after the Piper baseline**:
       it is the only TTS route for Kannada.
+      Now Sarvam AI, not Azure (section 11, note 12). The client is built and
+      unit-tested in `app/tts/sarvam.py`, and spoke Kannada and Bengali in one real
+      request each on 2026-10-13. Not ticked: no native speaker has chosen the voice.
 - [ ] `[kn]` Kannada text normalisation: rupee amounts, dates, digits, English words
       inside Kannada sentences
 - [ ] `[bn]` Bengali voice and text normalisation on the same Azure client
 - [ ] Azure as a fallback for English and Hindi if Piper fails or is too slow
-- [ ] Character-usage counter for Azure, so the free tier is not exhausted mid-demo
+- [x] Character-usage counter for Azure, so the free tier is not exhausted mid-demo.
+      Built for Sarvam: a daily character cap per process, `MULTIVOCO_SARVAM_DAILY_CHARS`.
+      It resets when the process restarts, so it is a brake, not an exact meter.
 - [ ] Benchmark per language: time to first chunk and real-time factor on 2 vCPUs for
       Piper, network time to first chunk for Azure, in `docs/tts.md`.
       Piper is measured on Garlic's laptop only, in `docs/tts.md`. Still to do: the
@@ -895,6 +901,28 @@ both devices agree, then Onion makes the change.
     - Asked of Onion: the Dockerfile lines above, and a run of
       `python -m app.tts.bench` on Render once the service exists.
 
+12. **Sarvam AI replaces Azure Speech for Kannada and Bengali.** Decided on 2026-10-13.
+    Azure's free tier needs a card to sign up, which blocked us. Sarvam gives free
+    credit on signup and has Kannada and Bengali voices.
+    - What Garlic built: `app/tts/sarvam.py`, registered as the TTS provider `sarvam`.
+      It streams PCM16 at 22 050 Hz, the same rate as Piper, raises `QuotaExceeded`
+      when the credit or the daily cap runs out, and can also speak English and Hindi.
+      One real request each in Kannada and Bengali worked on 2026-10-13: first audio
+      in 0.2 to 0.9 s (`docs/tts.md`).
+    - **Routing:** `app/core/languages.py` still names `azure` for `kn` and `bn`, and
+      it is frozen. Until Onion changes it, set
+      `MULTIVOCO_ROUTE_OVERRIDES={"kn": {"tts": "sarvam"}, "bn": {"tts": "sarvam"}}`.
+    - **The key** is `MULTIVOCO_SARVAM_API_KEY`. It is read by `app/tts/config.py`, not
+      by the core settings, so nothing in `app/core/config.py` changes.
+    - **The credit is a one-time grant, not a monthly allowance.** Sarvam's pricing page
+      says ₹1,000 on signup, and ₹30 per 10,000 characters for the `bulbul:v3` model,
+      which comes to roughly 330,000 characters in total. Checked on the web on
+      2026-10-13, not yet against a real account.
+    - Asked of Onion: change the `kn` and `bn` routes to `sarvam` in
+      `app/core/languages.py` once a real Kannada call has worked. In H, the Azure
+      Speech items (resource, key, region, usage cap) fall away, and the secret to set
+      on Render is the Sarvam key. Section 2 still says Azure.
+
 ## 12. Notes from Onion for Garlic
 
 Written by Onion on 2026-10-07, in reply to section 11. Same convention: each device
@@ -1023,7 +1051,7 @@ Added to "What Garlic needs to do":
 - [x] **B, C: raise `ProviderError` or `QuotaExceeded`** for provider failures (note 8).
 - [ ] **B, C, E: register on import, and export `startup`, `shutdown`, and `router`**
       where needed (notes 6 and 7).
-- [ ] **E: add the `callbacks` table** (note 9).
+- [x] **E: add the `callbacks` table** (note 9).
 
 14. **Hosting has moved from Hugging Face Spaces to Render** (2026-10-08). New Docker
     Spaces now need a paid plan. Render's free web service builds the same Dockerfile,

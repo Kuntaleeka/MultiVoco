@@ -30,6 +30,7 @@ def test_schema_has_the_agreed_tables():
         "calls",
         "turns",
         "tool_calls",
+        "callbacks",
     }
 
 

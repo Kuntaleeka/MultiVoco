@@ -6,7 +6,7 @@ from sqlalchemy import select
 
 from app.core.interfaces import CallContext, Tool
 from app.core.languages import Lang
-from app.db.models import Payment
+from app.db.models import Callback, Payment
 from app.tools import MAX_VERIFICATION_ATTEMPTS, build_tools
 from tests.loan_fixtures import (
     ASHA,
@@ -23,6 +23,7 @@ ACCOUNT_TOOLS = [
     "get_next_emi",
     "get_payment_history",
     "record_payment_promise",
+    "request_callback",
 ]
 
 
@@ -55,10 +56,17 @@ def test_every_tool_meets_the_contract(tools):
 
 @pytest.mark.parametrize("name", ACCOUNT_TOOLS)
 async def test_account_tools_refuse_before_verification(tools, ctx, name, loan_db):
-    args = {"loan_id": ASHA_LOAN, "amount": 5000, "promise_date": "2026-10-10"}
+    args = {
+        "loan_id": ASHA_LOAN,
+        "amount": 5000,
+        "promise_date": "2026-10-10",
+        "callback_date": "2026-10-10",
+    }
     result = await tools[name].run(args, ctx)
     assert result["error"] == "not_verified"
-    assert not {"loans", "emi_amount", "payments", "recorded"} & set(result)
+    assert not {"loans", "emi_amount", "payments", "recorded", "booked"} & set(result)
+    async with loan_db() as session:
+        assert (await session.scalars(select(Callback))).all() == []
     async with loan_db() as session:
         promised = await session.scalars(select(Payment).where(Payment.status == "promised"))
         assert promised.all() == []
@@ -212,6 +220,45 @@ async def test_a_bad_payment_promise_is_refused_and_not_stored(tools, ctx, loan_
     assert (await tools["record_payment_promise"].run(args, ctx))["error"] == code
     async with loan_db() as session:
         assert await session.scalar(select(Payment).where(Payment.status == "promised")) is None
+
+
+async def test_a_callback_is_booked_for_the_caller_on_this_call(tools, ctx, loan_db):
+    await verified(tools, ctx, ASHA)
+    result = await tools["request_callback"].run(
+        {"callback_date": "2026-10-09", "time_of_day": "evening", "note": "Wants to prepay"}, ctx
+    )
+    assert result == {"booked": True, "callback_date": "2026-10-09", "time_of_day": "evening"}
+    async with loan_db() as session:
+        row = await session.scalar(select(Callback))
+    assert (row.customer_id, row.call_id, row.requested_for) == (
+        ASHA_ID,
+        "call-1",
+        date(2026, 10, 9),
+    )
+    assert (row.time_of_day, row.note) == ("evening", "Wants to prepay")
+    assert row.created_at is not None
+
+
+async def test_a_callback_needs_only_a_date(tools, ctx):
+    await verified(tools, ctx, ASHA)
+    result = await tools["request_callback"].run(
+        {"callback_date": "2026-10-07", "time_of_day": "whenever", "note": None}, ctx
+    )
+    assert result == {"booked": True, "callback_date": "2026-10-07", "time_of_day": None}
+
+
+@pytest.mark.parametrize(
+    ("callback_date", "code"),
+    [("2026-10-06", "date_in_past"), ("2026-11-30", "date_too_far"), ("soon", "invalid_arguments")],
+)
+async def test_a_bad_callback_date_is_refused_and_not_stored(
+    tools, ctx, loan_db, callback_date, code
+):
+    await verified(tools, ctx, ASHA)
+    result = await tools["request_callback"].run({"callback_date": callback_date}, ctx)
+    assert result["error"] == code
+    async with loan_db() as session:
+        assert await session.scalar(select(Callback)) is None
 
 
 async def test_handoff_needs_no_verification_and_cleans_the_reason(tools, ctx):

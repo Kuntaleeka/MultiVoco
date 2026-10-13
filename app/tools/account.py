@@ -1,11 +1,12 @@
 """Account tools. All of them sit behind the identity gate in LoanTool.run."""
 
+from datetime import UTC, datetime
 from typing import Any
 
 from sqlalchemy import select
 
 from app.core.interfaces import CallContext, ToolSpec
-from app.db.models import Loan, Payment
+from app.db.models import Callback, Loan, Payment
 from app.tools.base import (
     LOAN_ID_PARAM,
     LoanTool,
@@ -19,6 +20,8 @@ from app.tools.base import (
 
 MAX_HISTORY = 12
 MAX_PROMISE_DAYS = 30
+MAX_CALLBACK_DAYS = 14
+TIMES_OF_DAY = ("morning", "afternoon", "evening")
 
 
 def _iso(value) -> str | None:
@@ -163,4 +166,65 @@ class RecordPaymentPromise(LoanTool):
             "loan_id": loan.id,
             "amount": money(amount),
             "promise_date": promise_date.isoformat(),
+        }
+
+
+class RequestCallback(LoanTool):
+    spec = ToolSpec(
+        name="request_callback",
+        description=(
+            "Book a call back from a loan officer for the verified caller, on a date and "
+            "optionally a time of day. Use it when the caller asks to be called back."
+        ),
+        parameters={
+            "type": "object",
+            "properties": {
+                "callback_date": {"type": "string", "description": "YYYY-MM-DD."},
+                "time_of_day": {
+                    "type": ["string", "null"],
+                    "description": (
+                        "morning, afternoon, or evening. Leave out if the caller has no preference."
+                    ),
+                },
+                "note": {
+                    "type": ["string", "null"],
+                    "description": "One line on what the caller wants to discuss.",
+                },
+            },
+            "required": ["callback_date"],
+        },
+    )
+
+    async def _run(self, args: dict[str, Any], ctx: CallContext) -> dict[str, Any]:
+        callback_date = parse_date(args.get("callback_date", ""))
+        if callback_date is None:
+            return error("invalid_arguments", "callback_date must be YYYY-MM-DD.")
+        days_ahead = (callback_date - self._today()).days
+        if days_ahead < 0:
+            return error("date_in_past", "The callback date is in the past. Ask for a new date.")
+        if days_ahead > MAX_CALLBACK_DAYS:
+            return error(
+                "date_too_far",
+                f"A callback can be at most {MAX_CALLBACK_DAYS} days ahead. "
+                "Ask for an earlier date.",
+            )
+        time_of_day = args.get("time_of_day")
+        if time_of_day not in TIMES_OF_DAY:
+            time_of_day = None
+        async with self._session() as session:
+            session.add(
+                Callback(
+                    customer_id=ctx.verified_customer_id,
+                    call_id=ctx.call_id,
+                    requested_for=callback_date,
+                    time_of_day=time_of_day,
+                    note=str(args.get("note") or "")[:500],
+                    created_at=datetime.now(UTC),
+                )
+            )
+            await session.commit()
+        return {
+            "booked": True,
+            "callback_date": callback_date.isoformat(),
+            "time_of_day": time_of_day,
         }

@@ -1,14 +1,16 @@
-"""The loan tools the agent can call. Owner: workstream B (Garlic).
-
-`request_callback` is not here yet: it needs a `callbacks` table, which is waiting on
-Onion's answer to note 9 in section 11 of the plan.
-"""
+"""The loan tools the agent can call. Owner: workstream B (Garlic)."""
 
 from collections.abc import Callable
 from datetime import date
 
 from app.db.session import SessionFactory
-from app.tools.account import GetLoanSummary, GetNextEmi, GetPaymentHistory, RecordPaymentPromise
+from app.tools.account import (
+    GetLoanSummary,
+    GetNextEmi,
+    GetPaymentHistory,
+    RecordPaymentPromise,
+    RequestCallback,
+)
 from app.tools.base import MAX_VERIFICATION_ATTEMPTS, LoanTool
 from app.tools.handoff import HANDOFF_TOOL, HandoffToHuman
 from app.tools.identity import VerifyIdentity
@@ -19,6 +21,7 @@ TOOL_CLASSES: tuple[type[LoanTool], ...] = (
     GetNextEmi,
     GetPaymentHistory,
     RecordPaymentPromise,
+    RequestCallback,
     HandoffToHuman,
 )
 
