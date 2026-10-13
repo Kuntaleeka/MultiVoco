@@ -1,3 +1,5 @@
+import resource
+import sys
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -26,6 +28,18 @@ app.include_router(call_router)
 app.state.packages = plugins.load_packages(app)
 
 
+def memory_mb() -> dict[str, int]:
+    """Memory this process holds now, and the most it has held. For fitting the host."""
+    peak = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
+    peak_mb = peak // 1024 if sys.platform == "linux" else peak // (1024 * 1024)  # KB vs bytes
+    try:
+        pages = int(Path("/proc/self/statm").read_text().split()[1])  # Linux only
+        now_mb = pages * resource.getpagesize() // (1024 * 1024)
+    except (OSError, ValueError, IndexError):
+        now_mb = peak_mb  # elsewhere only the peak is cheap to read
+    return {"memory_mb": now_mb, "peak_memory_mb": peak_mb}
+
+
 @app.get("/healthz")
 async def healthz() -> dict[str, str | int]:
     settings = get_settings()
@@ -34,6 +48,7 @@ async def healthz() -> dict[str, str | int]:
         "region": settings.region,
         "mock": settings.mock,
         "active_sessions": active_sessions(),
+        **memory_mb(),
     }
 
 

@@ -10,7 +10,7 @@ the code is right and this file has a bug.
 |---|---|
 | `/ws/call` | A voice call. Everything below describes this endpoint. |
 | `/ws/echo` | Sends back every text and binary frame unchanged. For checking transport. |
-| `/healthz` | `{"status": "ok", "region": ..., "mock": ..., "active_sessions": ...}` |
+| `/healthz` | `{"status": "ok", "region": ..., "mock": ..., "active_sessions": ..., "memory_mb": ..., "peak_memory_mb": ...}` |
 
 ## Frames
 

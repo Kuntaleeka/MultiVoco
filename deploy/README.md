@@ -54,6 +54,21 @@ All settings are environment variables: see `.env.example`. Non-secret ones are 
 `render.yaml`. `MULTIVOCO_MOCK` controls which components are mocked. Leave it at `all`
 until real providers are being switched on.
 
+## Running the real pipeline, and checking memory
+
+1. In the Render dashboard, open the service, then **Environment**. Add
+   `MULTIVOCO_DEEPGRAM_API_KEY`, `MULTIVOCO_GROQ_API_KEY`, and
+   `MULTIVOCO_GEMINI_API_KEY`, and change `MULTIVOCO_MOCK` to `trace_sink`. Save. Render
+   redeploys.
+2. Open `/healthz` on the service. `memory_mb` is what the process holds now and
+   `peak_memory_mb` is the most it has held since it started.
+3. Make a call in English and one in Hindi, so both Piper voices are used, and read
+   `/healthz` again.
+4. If the service restarts during a call, open **Events**. Render says so when a
+   service ran out of memory.
+
+The limit is 512 MB. To go back to the mock pipeline, set `MULTIVOCO_MOCK` to `all`.
+
 ## Limits to plan around
 
 - **512 MB of memory.** The mock pipeline is far below it. Silero and Piper will have

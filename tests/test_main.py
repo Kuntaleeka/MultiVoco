@@ -8,7 +8,9 @@ def test_healthz():
     with TestClient(app) as client:
         response = client.get("/healthz")
     assert response.status_code == 200
-    assert response.json()["status"] == "ok"
+    body = response.json()
+    assert body["status"] == "ok"
+    assert 10 < body["memory_mb"] <= body["peak_memory_mb"] < 4000
 
 
 def test_ws_echo_returns_binary_and_text_unchanged():

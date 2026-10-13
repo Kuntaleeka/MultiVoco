@@ -22,7 +22,10 @@ RUN python -m piper.download_voices en_US-lessac-medium hi_IN-priyamvada-medium 
 
 COPY --chown=user app ./app
 COPY --chown=user web ./web
+COPY --chown=user scripts ./scripts
 
 ENV PORT=8000
 EXPOSE 8000
-CMD ["sh", "-c", "exec uvicorn app.main:app --host 0.0.0.0 --port $PORT --proxy-headers --forwarded-allow-ips '*'"]
+# The seed step creates the tables and the synthetic customers if the database is
+# empty. With the default SQLite file that is every start, since the disk is not kept.
+CMD ["sh", "-c", "python -m scripts.seed && exec uvicorn app.main:app --host 0.0.0.0 --port $PORT --proxy-headers --forwarded-allow-ips '*'"]
