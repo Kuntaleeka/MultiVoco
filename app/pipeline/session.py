@@ -232,6 +232,8 @@ class CallSession:
             self._locked = True
             await self._set_language(Lang(lang), p.LanguageSource.MANUAL, None)
         self._spawn(self._watch_limits())
+        if auto and (prepare := getattr(self._detector, "prepare", None)) is not None:
+            self._spawn(prepare())  # get the detector ready while the greeting plays
         self._begin_reply(_static(self._agent.greeting(self._ctx)))
 
     # --- Audio in ----------------------------------------------------------------
@@ -430,6 +432,11 @@ class CallSession:
                     guess.lang, p.LanguageSource.AUDIO, guess.confidence
                 ):
                     return
+                if guess.text:
+                    # The detector transcribed it already. Replaying buffered audio into
+                    # a streaming recogniser in one burst is slower and loses words.
+                    await self._on_user_final(guess.text, _Pending(speech_end_ms, detected_ms))
+                    return
             if self._stt is None:
                 return
             pending = _Pending(speech_end_ms, detected_ms)
@@ -444,14 +451,26 @@ class CallSession:
                 await self._report(error)
 
     async def _detect(self, utt: _Utterance) -> LangGuess:
+        began = self._clock.now_ms()
         try:
-            return await self._detector.detect_audio(b"".join(utt.frames))
+            guess = await self._detector.detect_audio(b"".join(utt.frames))
+            log.info(
+                "session %s: language %s (%.2f) in %.0f ms",
+                self.id,
+                guess.lang,
+                guess.confidence,
+                self._clock.now_ms() - began,
+            )
+            return guess
         except ProviderError as error:
             log.warning("session %s: language detection failed: %s", self.id, error)
             return LangGuess(None, 0.0)
 
     async def _language_from_answer(self, utt: _Utterance) -> Lang:
         """The caller was asked which language they want. Work out what they said."""
+        guess = await self._detect(utt)
+        if guess.text:
+            return language_named_in(guess.text) or guess.lang or Lang.EN
         text = ""
         try:
             stt = registry.get_stt(Lang.EN)
@@ -468,7 +487,7 @@ class CallSession:
                 await stt.close()
         except (ProviderError, LookupError) as error:
             log.warning("session %s: could not transcribe the language answer: %s", self.id, error)
-        return language_named_in(text) or (await self._detect(utt)).lang or Lang.EN
+        return language_named_in(text) or guess.lang or Lang.EN
 
     # --- Replies -----------------------------------------------------------------
 

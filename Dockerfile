@@ -16,6 +16,10 @@ ENV UV_COMPILE_BYTECODE=1 \
 COPY --chown=user pyproject.toml uv.lock .python-version ./
 RUN uv sync --frozen --no-dev
 
+# Piper voices, about 60 MB each. Baked in so the service needs no download at start.
+RUN python -m piper.download_voices en_US-lessac-medium hi_IN-priyamvada-medium \
+    --download-dir voices
+
 COPY --chown=user app ./app
 COPY --chown=user web ./web
 

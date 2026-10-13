@@ -74,11 +74,12 @@ def test_no_provider_package_is_imported_when_everything_is_mocked(fake_packages
     assert [m.__name__ for m in plugins.load_packages(FastAPI())] == ["app.db", "app.metrics"]
 
 
-def test_a_package_that_does_not_exist_yet_is_skipped(settings_env, caplog):
-    settings_env(MOCK="none")
+def test_a_package_that_does_not_exist_yet_is_skipped(settings_env, caplog, monkeypatch):
+    monkeypatch.setitem(plugins.PACKAGES, "app.not_written_yet", ("vad",))
+    settings_env(MOCK="stt,langid,llm,tts,agent,trace_sink")  # vad is real
     loaded = plugins.load_packages(FastAPI())
-    assert "app.langid" not in [m.__name__ for m in loaded]
-    assert "does not exist yet" in caplog.text
+    assert "app.not_written_yet" not in [m.__name__ for m in loaded]
+    assert "app.not_written_yet does not exist yet" in caplog.text
 
 
 async def test_a_failing_shutdown_hook_does_not_stop_the_others(fake_packages):

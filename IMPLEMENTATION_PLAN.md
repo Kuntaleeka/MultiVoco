@@ -55,7 +55,9 @@ Open items, to be checked by whoever takes the workstream (quotas change often):
 - Deepgram: current free credit, which model handles Hindi-English code-switching best,
   and whether any streaming model covers Kannada and Bengali
 - Groq: current rate limits for the chosen model and for Whisper
-- Whisper: measured WER on Kannada and Bengali. Expect it to be worse than Hindi.
+- Whisper: measured WER on Kannada and Bengali. First live clips: clearly worse than
+  Deepgram on both, and its language detection mistakes both for Hindi (`docs/stt.md`,
+  `docs/langid.md`).
 - LLM: reply quality in Kannada and Bengali on Groq versus Gemini. Gemini may need to
   be the primary for these two.
 - Piper: which Hindi voice is acceptable for Hinglish output, its sample rate, and
@@ -99,18 +101,24 @@ numeral map, prompt examples, and a test set. No pipeline changes.
 1. The call page has a language picker that defaults to **Auto**. A manual choice
    skips detection and locks the session.
 2. On Auto, the agent opens with a short neutral greeting. The caller's first utterance
-   is buffered and sent to Whisper, which returns a detected language. The session
-   locks to that language's providers.
+   is buffered and transcribed three times at once by Deepgram: as Hindi/English, as
+   Kannada, and as Bengali. The recogniser most confident in its own transcript wins,
+   and the session locks to that language's providers. (Changed on 2026-10-11: the
+   original plan, Whisper's own language detection, cannot tell Kannada or Bengali from
+   Hindi. Evidence in `docs/langid.md`.)
 3. On every later turn, the script of the final transcript is checked (Latin,
    Devanagari, Kannada, Bengali). If it disagrees with the session language for two
-   turns in a row, the session switches.
-4. If detection confidence is low, or the first utterance is too short, the agent asks
-   which language the caller prefers and locks to the answer.
+   turns in a row, the session switches. This is a weak safety net: a recogniser set
+   to the wrong language mostly writes in its own script, so it will rarely fire.
+4. If the winner's lead is narrow, or the caller said less than about a second, the
+   agent asks which language the caller prefers and locks to the answer.
 5. Hindi and English share one route, so code-switching between them never triggers a switch.
 
-Known limits, to be stated in the write-up: the first turn is slower because detection
-uses batch Whisper; one-word openings are often misdetected; a mid-call switch costs
-up to two bad turns before it is caught.
+Known limits, to be stated in the write-up: the first reply on Auto is 1.5 to 4
+seconds slower, because detection uses Deepgram's batch endpoint (a streaming version
+would remove most of that, see workstream A); one-word openings such as "Namaste"
+cannot be told apart, so the caller is asked; and a wrong guess between Kannada and
+Bengali is corrected by the caller using the picker, not automatically.
 
 ## 3. Architecture
 
@@ -353,9 +361,8 @@ Owns `app/pipeline/`, `app/main.py`. Depends on: Phase 0 only (builds against mo
 - [x] Trace marks from 4.3 emitted at each stage
 - [x] Per-session limits: max call length, max turns, idle timeout, concurrent sessions
 - [x] Package loading and lifecycle hooks (`app/pipeline/plugins.py`, section 12 note 6)
-- [ ] Pause-and-continue: an utterance that ends and resumes before the reply starts is
-      joined to the next one. Written, but not covered by a test, because the mock STT
-      answers instantly. Test it with the real STT in Phase 2 step 2.
+- [x] Pause-and-continue: an utterance that ends and resumes before its transcript is
+      back is joined to the next one and answered once. Tested with a slow STT.
 
 Done when: with mocks, an interrupt stops outgoing audio within 100 ms of the VAD event
 in tests, no task is left running after disconnect, every turn produces a full trace,
@@ -370,24 +377,68 @@ real socket with real-time frames, `flush` arrived 255 ms after the caller began
 
 Owns `app/audio/`, `app/stt/`, `app/langid/`. Depends on: Phase 0.
 
-- [ ] Silero VAD wrapper running in the executor, with tunable thresholds and end-of-speech silence
-- [ ] Deepgram streaming client: partials, finals, reconnect, keep-alive
-- [ ] Groq Whisper fallback: buffer the utterance, transcribe on speech end
-- [ ] Provider switch via config, plus automatic fallback on error
+- [x] Silero VAD wrapper running in the executor, with tunable thresholds and
+      end-of-speech silence (`MULTIVOCO_VAD_*`). ONNX Runtime, no PyTorch. The model
+      file is in the repo.
+- [x] Deepgram streaming client: partials, finals, reconnect, keep-alive
+- [x] Groq Whisper fallback: buffer the utterance, transcribe on speech end, drop the
+      segments Whisper rates as silence
+- [x] Provider switch via config, plus automatic fallback on error. The utterance in
+      progress is replayed into the fallback, so the caller does not repeat it.
+- [x] `scripts/stt_file.py`: transcribe a WAV from the command line, with `--lang`,
+      `--provider`, and `--json` (workstream G uses this)
+- [x] Live check against the real services (2026-10-11): both clients work, in all
+      four languages, and a whole call ran through the server on the real VAD and
+      Deepgram. It found one bug, now fixed: Deepgram's default endpointing dropped a
+      short opening word. Results in `docs/stt.md`.
 - [ ] Hinglish settings: language/model choice, tested on at least 20 recorded clips
+- [ ] Tune `MULTIVOCO_VAD_END_SILENCE_MS` on real calls. It is 500 ms now, and it is
+      added to every turn's latency. See the note below.
 - [ ] `[kn]` Kannada STT: compare every available provider on at least 20 clips, pick
       one, set the routing entry. Check Kannada-English code-switching too.
 - [ ] `[bn]` Bengali STT: same comparison and routing entry
-- [ ] Language detector, audio: Whisper-based detection on the first utterance, with a
-      confidence value and a minimum-duration rule
-- [ ] Language detector, text: script check using the ranges in `app/core/languages.py`,
+- [x] Language detector, audio (`app/langid/`): a ballot of three Deepgram recognisers
+      on the first utterance, with the winner's lead as the confidence, and a
+      minimum-speech rule. Run live: right on all five test clips as full sentences,
+      and it asks instead of guessing on one-word openings. Details in `docs/langid.md`.
+- [x] Language detector, text: script check using the ranges in `app/core/languages.py`,
       treating Latin-script text as "no evidence" rather than English
-- [ ] `scripts/stt_file.py`: transcribe a WAV from the command line, with `--lang`
-      (workstream G uses this)
+- [x] The detector hands over its transcript, so the first utterance is not transcribed
+      twice, and its connections are opened while the greeting plays
+- [x] `scripts/langid_file.py`: detect the language of a WAV from the command line,
+      with every recogniser's vote (workstream G uses this)
+- [ ] **Streaming ballot.** Run the three recognisers as live streams while the caller
+      speaks, so detection adds about 250 ms and not 1.5 to 4 seconds. Needs a small
+      addition to the detector interface and the orchestrator.
+- [ ] Check the detector on recorded human speech, especially short openings and
+      Kannada against Bengali. Five synthetic clips are not evidence of accuracy.
+- [ ] Bring the README's and `.env.example`'s provider notes up to date after the live check
 
 Done when: both providers pass the interface tests, a note in `docs/stt.md` compares
 their latency and WER per language on the sample clips, and the detector passes the
 interface tests for all four languages.
+
+Status on 2026-10-11: working against the real services. Still open: tuning on
+recorded human speech, the 20-clip comparisons, and language detection.
+
+What was measured, on this Mac, with the Mac's built-in voice as the "caller":
+
+- The VAD costs about 0.06 ms per 32 ms frame, and the server with Silero loaded uses
+  about 110 MB of memory. Both leave plenty of room in Render's 512 MB.
+- Speech start is reported about 64 ms after it begins. With the real VAD in the
+  server and everything else mocked, the reply began about 530 ms after the caller
+  stopped. Nearly all of that is the 500 ms end-of-speech silence.
+- A caller who pauses for more than 500 ms mid-sentence is answered during the pause.
+  When they carry on, it counts as an interruption. Shortening the silence makes
+  replies faster and this worse. It needs tuning on real callers.
+
+One finding that should change the routing table in section 2.1, once it is confirmed
+on recorded speech: **Deepgram transcribes Kannada and Bengali in streaming**, and on
+the first clips it was both faster and clearly more accurate than Whisper for them. Its
+`multi` mode handled Hindi, English, and the two mixed in one sentence. The evidence so
+far is one synthetic clip per language (`docs/stt.md`), which is enough to try it and
+not enough to decide. To try it:
+`MULTIVOCO_ROUTE_OVERRIDES={"kn": {"stt": "deepgram"}, "bn": {"stt": "deepgram"}}`.
 
 ### B: Agent (LLM, tools, guardrails) (Garlic)
 
@@ -469,22 +520,24 @@ within one chunk on both providers.
 
 Owns `web/client/`. Depends on: Phase 0 (works against the echo endpoint and mock pipeline).
 
-Written, but **not yet run in a browser**. A box is ticked only where the code was
-checked some other way. Everything else needs a person with a microphone.
+Run by a person on the deployed Render service on 2026-10-09: the call worked, and
+barge-in worked on laptop speakers without headphones. The boxes still open are the
+ones nobody has reported on yet.
 
 - [x] AudioWorklet capture, resample to 16 kHz PCM16, 512-sample frames (resampler
       checked in Node against a known signal)
 - [x] Playback queue that handles the announced sample rate, with gapless scheduling
       (resampler checked in Node: chunked input gives the same output as one piece)
-- [ ] `flush` handling: stop audio immediately and report `playback_position`
+- [x] `flush` handling: stop audio immediately and report `playback_position`
 - [ ] `playback_started` reporting for the client-side latency mark
-- [ ] UI: call button, state indicator, live transcript, error and mic-permission states
+- [x] UI: call button, state indicator, live transcript
+- [ ] UI: error and mic-permission states (step 7 of the browser check)
 - [ ] Language picker (Auto, English, Hindi, Kannada, Bengali), a badge showing the
       detected language from the `language` message, and a mid-call override
 - [ ] Transcript renders Devanagari, Kannada, and Bengali script correctly (fonts
       loaded, no fallback boxes), including mixed-script lines
 - [ ] Playback handles a sample-rate change between turns, since Piper and Azure differ
-- [ ] Echo cancellation enabled in `getUserMedia`. Test barge-in with speakers, not only headphones
+- [x] Echo cancellation enabled in `getUserMedia`. Barge-in tested with speakers, not only headphones
 - [ ] Tested in Chrome, Safari, and one mobile browser
 
 Done when: a full call works against the mock pipeline, and the agent's own voice
@@ -583,11 +636,12 @@ pipeline can be deployed long before real providers are wired in.
 
 - [x] Dockerfile for the mock pipeline, `render.yaml`, and steps in `deploy/README.md`.
       **Not built here: this machine has no Docker.** The first build on Render is the test.
-- [ ] Render service created from the Blueprint (needs a Render account connected to
-      the GitHub repository; steps in `deploy/README.md`). WebSocket confirmed working
-      through the proxy.
-- [ ] Dockerfile: Piper voices and Silero weights baked in at build time, on ONNX
-      Runtime with no PyTorch, and measured to fit in 512 MB
+- [x] Render service created from the Blueprint, the Dockerfile built there, and a
+      call made on the public link (2026-10-09)
+- [x] Dockerfile: Piper voices and Silero weights baked in at build time, on ONNX
+      Runtime with no PyTorch. Not built anywhere yet: Render's next build is the test.
+- [ ] **Measure memory on Render with both voices loaded.** On Onion's Mac the full
+      pipeline used 510 to 570 MB, which is over Render's 512 MB (section 12, note 19).
 - [ ] Secrets set in the Render dashboard (provider keys, the Azure Speech key and region)
 - [ ] Azure Speech resource created in the region closest to the host (Southeast Asia, for Singapore)
 - [ ] Daily usage caps for Azure characters and Whisper audio, with a clear message
@@ -612,13 +666,19 @@ Do these in order. Steps marked **joint** connect an Onion stream to a Garlic st
 both devices need the other's latest work, and should be available at the same time
 to fix what breaks.
 
-1. [ ] Onion (O + D): real browser against the mock pipeline, including barge-in
-2. [ ] Onion (O + A): real VAD and STT. Tune end-of-speech silence.
-3. [ ] **Joint** (O + B): real agent. First full text-in, text-out call.
-4. [ ] **Joint** (O + C): real TTS. **First real voice call, in English/Hindi (milestone M2).**
+1. [x] Onion (O + D): real browser against the mock pipeline, including barge-in
+2. [ ] Onion (O + A): real VAD and STT. Done and run end to end on 2026-10-11.
+       Left open for tuning the end-of-speech silence on real callers.
+3. [x] **Joint** (O + B): real agent. First full text-in, text-out call.
+4. [x] **Joint** (O + C): real TTS. **First real voice call, in English/Hindi (milestone M2).**
+       Run on 2026-10-13, on Onion's laptop: a three-turn call in English and a
+       two-turn call in Hindi, with every component real except the trace sink.
+       Results in section 12, note 19.
 5. [ ] **Joint** (O + A + B + C): Kannada route end to end with a manual language choice.
        **First Kannada call (milestone M2k).**
-6. [ ] Onion (O + A): auto-detection across English, Hindi, and Kannada, including a mid-call switch
+6. [ ] Onion (O + A): auto-detection across English, Hindi, and Kannada, including a mid-call switch.
+       Detection on the first utterance ran end to end on 2026-10-11, in all four
+       languages. A mid-call switch has only been tested on mocks.
 7. [ ] **Joint** (O + E): traces persisted. Garlic switches dashboard F from fixtures to the API.
 8. [ ] Onion (H): deploy the real pipeline. Measure latency from the deployed service, not from a laptop.
 9. [ ] Garlic (G): full eval run against the deployed build, for English/Hindi and Kannada.
@@ -713,13 +773,13 @@ audio session, so Garlic is never blocked waiting for Onion's pipeline.
 | Stream | Owner | Status |
 |---|---|---|
 | Phase 0 | Onion | done, contracts frozen |
-| O Orchestrator | Onion | done on mocks, 128 tests passing in total |
-| A VAD + STT + language detection | Onion | not started |
-| D Browser client | Onion | written, needs a check in a real browser |
-| H Deploy | Onion | Dockerfile and `render.yaml` written, service not created yet |
 | B Agent | Garlic | in progress: tools, guardrails, agent loop, and the Groq and Gemini client, tried live in English, Hindi, and Kannada. Left: `request_callback`, Kannada and Bengali prompt work. |
 | C TTS | Garlic | in progress: Piper for English and Hindi built and benchmarked on a laptop. Left: listening check, Render benchmark, Azure. |
 | E DB + metrics | Garlic | started: session module and seed script only |
+| O Orchestrator | Onion | done on mocks |
+| A VAD + STT + language detection | Onion | VAD, both STT clients, and language detection working against the real services. Open: the streaming ballot, and tuning on recorded human speech. |
+| D Browser client | Onion | working on the deployed service. A few checks not yet reported. |
+| H Deploy | Onion | mock pipeline live on Render. Limits, secrets, and wake-up handling to come. |
 | F Dashboard | Garlic | not started |
 | G Evals | Garlic | not started |
 
@@ -728,8 +788,8 @@ audio session, so Garlic is never blocked waiting for Onion's pipeline.
 | | Milestone | Proves |
 |---|---|---|
 | M0 | Phase 0 merged, mock test green | Both devices can build against the contracts |
-| M1 | Browser talks to the mock pipeline on the public Render link, barge-in works | Transport, cancellation, and hosting are sound |
-| M2 | First real voice call in English/Hindi, locally | All four providers work together |
+| M1 | Browser talks to the mock pipeline on the public Render link, barge-in works. **Reached 2026-10-09.** | Transport, cancellation, and hosting are sound |
+| M2 | First real voice call in English/Hindi, locally. **Reached 2026-10-13.** | All four providers work together |
 | M2k | First real Kannada call, manual language choice | The second provider route works |
 | M3 | Auto-detection working, real pipeline deployed, traces in the dashboard | Latency is measured per language, not guessed |
 | M4 | Eval run for English/Hindi and Kannada published in the README | The numbers that carry the project exist |
@@ -1040,3 +1100,174 @@ Added to "What Garlic needs to do":
 
 - [ ] **C: benchmark Piper within 512 MB and a shared CPU** (note 14), and report the
       memory it uses per loaded voice.
+
+15. **Stage 2 (audio in) is written.** What it means for Garlic:
+    - **New runtime dependencies:** `onnxruntime`, `numpy`, and `httpx2` (moved from the
+      dev group). Run `uv sync` after pulling. If Garlic has added dependencies on the
+      `agent` branch, keep both sets of lines in `pyproject.toml` and run `uv lock`.
+    - **`scripts/stt_file.py` is ready for G's WER runner.** With `--json` it prints
+      one object per file: the transcript, the confidence, and the time from end of
+      speech to the final transcript. It needs the provider keys.
+    - ~~`app.stt.groq_whisper.transcribe(pcm, language=None)` returns the language
+      Whisper heard, for G's language ID suite.~~ **Do not use this for language ID.**
+      It mistakes Kannada and Bengali for Hindi. See note 17.
+    - **Every folder under `tests/` now has an `__init__.py`**, so tests can share
+      helpers across folders. Add one to any new test folder, or two `conftest.py`
+      files will collide.
+    - **Use `httpx2` for HTTP** in B and C, so the image carries one client. It has the
+      same interface as `httpx`. Create one client per process, and close it in your
+      package's `shutdown()`.
+    - **Deepgram may cover Kannada and Bengali in streaming** (section 6, workstream A).
+      Nothing to do yet. If it holds up, the `kn` and `bn` rows in section 2.1 change.
+
+16. **First live STT results are in `docs/stt.md`** (2026-10-11). For Garlic:
+    - Deepgram worked in all four languages and beat Whisper on Kannada, Bengali, and
+      Hinglish, on one synthetic clip each. G's recorded test sets are what will
+      settle the routing, so the Kannada set matters even more now.
+    - "EMI" inside a Hindi sentence was misheard by both providers ("Amy", "year").
+      For B: expect garbled loan terms in transcripts, and have the agent confirm
+      before acting on an amount or a date it is unsure it heard. For G: include loan
+      vocabulary in every test set, and count errors on those words separately.
+    - With the real VAD and Deepgram, the reply began about 830 ms after the caller
+      stopped, before any real agent or TTS time is added. That is the budget the
+      agent and Piper are adding to.
+
+17. **Language detection is built, and not the way section 2.2 first described**
+    (2026-10-11). Whisper's language detection calls Kannada and Bengali "Hindi",
+    confidently. So does Deepgram's. What works is a ballot: transcribe the utterance
+    as Hindi/English, as Kannada, and as Bengali at once, and take the recogniser that
+    is surest of its own transcript. `docs/langid.md` has the evidence. For Garlic:
+    - **G: use `scripts/langid_file.py` for the language ID suite.** With `--json` it
+      prints the guess, the confidence (0.6 and up is "sure"), the time taken, and
+      every recogniser's vote. `--seconds 1.2` tests a short opening from a longer clip.
+    - **G: the cases that matter most** are one-word and two-word openings, and
+      Kannada against Bengali. Report "sure and wrong" separately from "asked the
+      caller": the first is the failure, the second is working as designed.
+    - **B: on Auto, the first user turn's text comes from the detector**, not from the
+      streaming recogniser. It is the same kind of text, so nothing changes for the
+      agent.
+    - **One more addition to `app/core/`, in Onion's stream:** `LangGuess` has an
+      optional third field, `text`, the detector's transcript. Existing code that
+      builds `LangGuess(lang, confidence)` still works.
+    - **The script-based switch is a weak safety net.** A recogniser set to the wrong
+      language writes in its own script, so a wrong first guess is mostly corrected by
+      the caller using the picker. The eval scenarios in G should include that.
+
+18. **After merging Garlic's agent and Piper** (2026-10-11). For Garlic:
+    - **`uv.lock` was broken by the merge** and no longer parsed (two copies of several
+      packages, from a hand merge). Onion rebuilt it from `main`'s lock with `uv lock`.
+      Next time: take either side's `uv.lock` whole, then run `uv lock`.
+    - **The status table in section 8 had every row twice** after the merge. Onion kept
+      the newer row for each stream and left Garlic's wording as it was.
+    - **`test_a_package_that_does_not_exist_yet_is_skipped`** now uses a made-up
+      package name, as note 11 in section 11 suggested, so it no longer depends on
+      which packages exist.
+    - **The first call with the real agent in the pipeline worked**, in Hindi, with a
+      tone for the voice: the agent's first reply was the identity question. Piper is
+      not installed on Onion's machine yet, so the first real voice call (M2) has not
+      been tried.
+    - **Do not use any timing from Onion's runs on the afternoon of 2026-10-11.** The
+      laptop was asleep on battery and running in short wake-ups, which stretched
+      every timer. That, not the services, caused the slow replies and cut-off
+      transcripts seen that afternoon. The figures in `docs/stt.md` and
+      `docs/langid.md` are from the morning and are not affected.
+    - **Three changes to the Deepgram client**, made while chasing the above. They
+      are sound on their own and are tested:
+      audio is queued for a writer task, so a stalled connection can no longer hold
+      up the call's audio loop (a full queue counts as a failure); when Deepgram does
+      not answer a flush in time and Whisper is there as a fallback, the utterance is
+      redone by Whisper, not passed on cut short; and closing a connection waits at
+      most a second.
+    - **For H, from note 11 in section 11:** the Dockerfile still needs the voice
+      download step and the Render benchmark. Not done yet.
+
+19. **M2: the first real voice calls worked** (2026-10-13, Onion's laptop, awake this
+    time). Real VAD, Deepgram, Garlic's agent on Groq, and Piper. The caller was the
+    Mac's built-in voice playing recordings in real time.
+
+    English, as Asha Rao:
+
+    | Caller | Agent | First audio after the caller stopped |
+    |---|---|---|
+    | (call starts) | Hello, this is the loan helpline. How can I help you today? | |
+    | Hi. When is my next EMI due? | May I have the last four digits of your registered phone number, please? | 1.6 s |
+    | The last four digits are 4821, and my date of birth is the 04/12/1990. | Your next EMI of 4150.00 rupees is due on 25 October 2026. | 2.8 s, with two tool calls |
+
+    Hindi, as सुनीता शर्मा:
+
+    | Caller | Agent | First audio after the caller stopped |
+    |---|---|---|
+    | (call starts) | नमस्ते, यह लोन हेल्पलाइन है। मैं आपकी क्या मदद कर सकती हूँ? | |
+    | नमस्ते, मेरी अगली EMI कब है? | कृपया अपने पंजीकृत मोबाइल नंबर के अंतिम 4 अंक और जन्म तिथि बताइए। | 1.6 s |
+    | मेरे phone के आखिरी चार अंक दो दो एक **साथ** हैं, और जन्म तिथि बीस जनवरी उन्नीस सौ बयासी है. | माफ़ कीजिए, मैं यह पक्का नहीं कर पाई। क्या आप एक बार फिर बताएँगे? | 3.2 s |
+
+    The agent's audio was saved and played back into Deepgram, which heard every line
+    correctly in both languages, so Piper's speech is intelligible. Nobody has
+    listened to it yet: that is still Garlic's open voice check.
+
+    What this shows, for Garlic:
+    - **The identity gate and the figure guardrail worked in a real call.** No account
+      detail was given before verification, and the EMI figure came from a tool.
+    - **Hindi verification failed on a mishearing.** The caller said "सात" (seven) and
+      Deepgram wrote "साथ" (with), so the digits were incomplete and the agent gave the
+      safe reply. That is the right behaviour, but it will happen often. For B: accept
+      digits spoken as Hindi words, treat "साथ" as "सात" where a digit is expected, and
+      read the digits back for the caller to confirm. For G: put spoken digits and
+      dates in every language's test set.
+    - **Dates arrive in American order.** Deepgram's formatting turned "the twelfth of
+      April nineteen ninety" into "04/12/1990". Verification passed, so the agent read
+      it as April. For B: make sure a date is never read day-first, or have Onion turn
+      Deepgram's date formatting off so the words arrive as spoken. Say which.
+    - **Latency so far:** 1.6 s to first audio on a plain turn, about 3 s on a turn with
+      tool calls. Of the 1.6 s, about 0.75 s is the VAD's end-of-speech wait plus
+      Deepgram's flush (`docs/stt.md`), which leaves about 0.85 s for the LLM, the
+      sentence check, and Piper. The dashboard will split that properly once the trace
+      sink is real.
+    - **Memory is a problem for Render.** The server used 510 to 570 MB on the Mac with
+      Silero and both Piper voices loaded and in use, against Garlic's 240 MB for the
+      voices alone. Render's free plan has 512 MB. The Mac figure may not match Linux,
+      so the next step is to measure on Render. If it does not fit: load only one
+      voice at a time, or move Hindi to Azure and keep one Piper voice.
+    - **A pause still splits a sentence.** "Thanks. And how much is the EMI?" was
+      answered at "Thanks." because the pause after it was over 500 ms. Tuning for
+      stage 5.
+
+20. **A bug seen in a real call: the agent ran on, repeating itself, with no spaces
+    between sentences** (2026-10-13). After the caller gave their date of birth, one
+    reply read: "Could you also provide your date of birth?Sure, please tell me your
+    date of birth.User:Apologies, I didn't catch that. Could you please repeat your
+    date of birth?I'm sorry, I'm still missing..." and so on until the caller cut in.
+    Onion reproduced it in text mode with `registry.get_agent` and the real LLM.
+
+    Three causes, all in workstream B:
+    - **The model leaves out the space after a sentence.** Both Groq models do it:
+      the main one wrote "...due on 23 October 2026.Is there anything else I can assist
+      you with today?". `SentenceBuffer` in `app/agent/guardrails.py` ends a sentence
+      only when whitespace follows, so it saw the two as one sentence.
+    - **So the rules that stop a reply never fired.** "A question ends the reply"
+      checks whether the sentence ends in "?", and the run-together sentence ended in
+      a full stop. `MAX_SENTENCES` counted four of these blobs, not four sentences.
+      The guardrails also judged each blob as one sentence.
+    - **The backup model writes both sides of the conversation.** The run-on reply came
+      from `openai/gpt-oss-20b`, used because the main model was over its 8000 tokens
+      a minute after a few test calls. It wrote "User:" lines and answered them, and
+      those were spoken aloud. On the main model, once the limit had reset, the same
+      conversation gave clean one-sentence replies.
+
+    Asked of Garlic:
+    - Split sentences without needing whitespace. Onion's splitter now does this
+      (`app/pipeline/splitter.py`, `_starts_sentence`): a letter straight after "?" or
+      "!" starts a new sentence, and so does a capital or a non-Latin letter straight
+      after a full stop. A digit or a small Latin letter after a full stop does not,
+      which keeps "8,450.50" and "example.com" whole. The same rule would fit
+      `SentenceBuffer`.
+    - Stop the reply at a speaker label ("User:", "Caller:", "Assistant:", "Agent:"),
+      and do not speak it.
+    - Decide what to do when the main model is rate-limited. The 20b model is not safe
+      to put in front of a caller as it is. Setting `MULTIVOCO_GROQ_BACKUP_MODEL=` to
+      empty skips it and goes to Gemini.
+    - Add the run-on text above as a test case.
+
+    What Onion changed: only its own splitter, with tests. That alone does not fix the
+    call: the agent still releases the extra sentences. Onion has not touched
+    `app/agent/`.

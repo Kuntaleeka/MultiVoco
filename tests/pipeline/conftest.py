@@ -86,7 +86,9 @@ class Rig:
         self.stt_script: dict[Lang, list[str]] = {}
         self.detector = MockLanguageDetector()
         self.agent_class = MockAgent
-        self.config = PipelineConfig(position_timeout_s=0.2, playback_margin_s=0.01)
+        self.config = PipelineConfig(
+            position_timeout_s=0.2, playback_margin_s=0.01, min_detect_ms=400.0
+        )
         self.settings = get_settings()
         self.session: CallSession | None = None
         self.use("trace_sink", lambda: self.sink)

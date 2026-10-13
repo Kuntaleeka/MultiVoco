@@ -39,8 +39,8 @@ def test_kinds_can_be_mocked_one_at_a_time(settings_env):
 
 
 def test_unregistered_provider_fails_with_a_clear_error(settings_env):
-    settings_env(MOCK="none")
-    with pytest.raises(registry.ProviderNotRegistered, match="deepgram"):
+    settings_env(MOCK="none", ROUTE_OVERRIDES='{"en": {"stt": "nobody"}}')
+    with pytest.raises(registry.ProviderNotRegistered, match="nobody"):
         registry.get_stt(Lang.EN)
 
 

@@ -67,3 +67,36 @@ def test_questions_exclamations_and_closing_quotes():
 
 def test_whitespace_only_input_gives_nothing():
     assert split(["  ", "\n"]) == []
+
+
+def test_a_missing_space_after_a_sentence_still_splits():
+    # Seen live from the LLM, on both of Groq's models.
+    text = "Your next EMI of 4150.00 rupees is due on 23 October 2026.Is there anything else?"
+    assert split(list(text)) == [
+        "Your next EMI of 4150.00 rupees is due on 23 October 2026.",
+        "Is there anything else?",
+    ]
+    assert split(["Could you tell me your date of birth?Sure, go ahead.And the digits?"]) == [
+        "Could you tell me your date of birth?",
+        "Sure, go ahead.",
+        "And the digits?",
+    ]
+
+
+def test_a_missing_space_splits_in_every_script():
+    assert split(list("ನಿಮ್ಮ EMI ಐದನೇ ತಾರೀಖು.ಬೇರೆ ಏನಾದರೂ ಸಹಾಯ ಬೇಕೇ?ಹೌದು")) == [
+        "ನಿಮ್ಮ EMI ಐದನೇ ತಾರೀಖು.",
+        "ಬೇರೆ ಏನಾದರೂ ಸಹಾಯ ಬೇಕೇ?",
+        "ಹೌದು",
+    ]
+    assert split(["क्या मैं और मदद करूँ?जी हाँ"]) == ["क्या मैं और मदद करूँ?", "जी हाँ"]
+
+
+def test_a_full_stop_inside_a_token_does_not_split():
+    for text in (
+        "Pay 8,450.50 by 05.11.2026 please.",
+        "Visit example.com or use app v2.x today.",
+        "Thank you Mr.Rao and Dr.Shetty for calling.",
+        "It is 3.5% of Rs.500 only.",
+    ):
+        assert split(list(text)) == [text]

@@ -525,3 +525,40 @@ async def test_idle_and_length_limits_end_the_call(rig, limits):
     await asyncio.wait_for(session.closed.wait(), 3)
     assert rig.socket.close_code == 4408
     assert rig.socket.of_type("error")[-1]["code"] == "limit_reached"
+
+
+# --- Slow STT ------------------------------------------------------------------------
+
+
+async def test_a_pause_mid_sentence_is_answered_once(rig):
+    """The caller pauses long enough to end the utterance, then carries on before the
+    transcript of the first half is back. Both halves become one user turn."""
+    from app.core.mocks import MockSTT
+
+    class SlowSTT(MockSTT):
+        async def finish(self) -> None:
+            async def later() -> None:
+                await asyncio.sleep(0.15)
+                await MockSTT.finish(self)
+
+            self._late = asyncio.create_task(later())
+
+    rig.stt_script[Lang.EN] = ["I wanted to ask", "when my EMI is due"]
+    rig.use("stt", lambda lang: SlowSTT(rig.stt_script[lang]))
+    await rig.start("en")
+    await rig.greeted()
+
+    await rig.say(300)  # first half; its transcript takes 150 ms
+    await rig.audio(tone(300))  # they are already speaking again
+    await asyncio.sleep(0.2)  # the first transcript arrives mid-speech
+    assert rig.session._next_turn_id == 1  # and is held, not answered
+    await rig.audio(silence(400))
+
+    await rig.reply(1)
+    assert rig.trace(1).user_text == "I wanted to ask when my EMI is due"
+    finals = [
+        m["text"] for m in rig.socket.of_type("transcript") if m["role"] == "user" and m["final"]
+    ]
+    assert finals == ["I wanted to ask when my EMI is due"]
+    assert rig.session._next_turn_id == 2
+    assert rig.socket.of_type("flush") == []
