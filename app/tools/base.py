@@ -5,7 +5,6 @@ Results are read by the LLM, and every number in them becomes a figure the agent
 allowed to say (guardrail 2), so return exact values and nothing speculative.
 """
 
-import re
 from collections.abc import Callable
 from datetime import date
 from decimal import Decimal, InvalidOperation
@@ -21,8 +20,6 @@ from app.db.session import SessionFactory, get_session_factory
 
 MAX_VERIFICATION_ATTEMPTS = 3
 
-_DAY_FIRST = re.compile(r"(\d{1,2})[-/.](\d{1,2})[-/.](\d{4})")
-
 
 def error(code: str, message: str, **extra: Any) -> dict[str, Any]:
     return {"error": code, "message": message, **extra}
@@ -33,18 +30,13 @@ def money(value: Decimal) -> str:
 
 
 def parse_date(value: Any) -> date | None:
-    """ISO (2026-11-05) or day-first (05/11/2026), with numerals from any of the four languages."""
-    text = to_ascii_digits(str(value)).strip()
+    """ISO only (2026-11-05), with numerals from any of the four languages.
+
+    Not 05/11/2026: speech recognition writes spoken dates month first, so a slashed date
+    passed through unconverted would be read wrongly either way. The model must convert.
+    """
     try:
-        return date.fromisoformat(text)
-    except ValueError:
-        pass
-    match = _DAY_FIRST.fullmatch(text)
-    if match is None:
-        return None
-    day, month, year = (int(part) for part in match.groups())
-    try:
-        return date(year, month, day)
+        return date.fromisoformat(to_ascii_digits(str(value)).strip())
     except ValueError:
         return None
 

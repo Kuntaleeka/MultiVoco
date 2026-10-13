@@ -8,7 +8,13 @@ os.environ["MULTIVOCO_ROUTE_OVERRIDES"] = "{}"
 
 import pytest
 
-from app.core.config import get_settings
+from app.core.config import Settings, get_settings
+
+# The variables above are not enough for a dict setting: pydantic-settings merges the
+# dict from the environment into the one from .env, so a developer's
+# MULTIVOCO_ROUTE_OVERRIDES still came through. Tests do not read .env at all.
+Settings.model_config["env_file"] = None
+get_settings.cache_clear()
 
 
 @pytest.fixture

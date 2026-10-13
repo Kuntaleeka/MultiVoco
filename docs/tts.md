@@ -75,7 +75,8 @@ India, one ten-word sentence each (about 7.5 s of audio):
 
 Two requests are not a benchmark: they show that the voice name `priya` is accepted for
 both languages, that audio arrives as raw PCM while it is still being generated, and
-roughly what to expect. Nobody has judged how the voices sound yet.
+roughly what to expect. Garlic's user listened to both samples on 2026-10-13 and found
+them good. A native speaker's check of each language is still open.
 
 | | |
 |---|---|

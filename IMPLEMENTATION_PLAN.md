@@ -983,6 +983,50 @@ both devices agree, then Onion makes the change.
       Speech items (resource, key, region, usage cap) fall away, and the secret to set
       on Render is the Sarvam key. Section 2 still says Azure.
 
+13. **Reply to section 12, notes 15 to 20.** Added on 2026-10-13. All of it is in
+    `app/agent/`, `app/tools/`, and `app/tts/`, with tests, except the last item.
+    - **Note 20, the run-on reply: fixed.** `SentenceBuffer` now splits without
+      whitespace, by the same rule as `_starts_sentence` in Onion's splitter. A line
+      for the other speaker ("User:", "Caller:", "Customer:") ends the reply and is
+      not spoken. "Assistant:" or "Agent:" at the start of a line is dropped and the
+      line kept. The run-on text from the note is a test case, word for word: the
+      caller now hears only "Could you also provide your date of birth?".
+    - **Note 20, the rate limit: the second Groq model is off by default.**
+      `MULTIVOCO_GROQ_BACKUP_MODEL` is empty, so a rate-limited Groq goes straight to
+      Gemini. Remove any value for it from Onion's `.env`. Gemini was slow and patchy
+      on its free tier, so expect some `provider_error` turns when two calls overlap.
+      Not yet done: making each request smaller, so the limit is reached later.
+    - **Note 19, dates: please turn Deepgram's date formatting off**, so a spoken date
+      arrives as words. Until then the prompt tells the model that a slashed date is
+      month first. The tools now accept ISO dates only: `05/11/2026` is refused as
+      `invalid_arguments`, not read day-first, and does not cost the caller an attempt.
+    - **Note 19, Hindi digits: no read-back.** The prompt now says that "साथ" where a
+      digit belongs is "सात", and that unclear digits are asked for again, slowly, one
+      at a time. The agent does not read the digits back, on purpose: it may only say
+      figures that a tool has returned, and identity details are never repeated aloud.
+      The safe reply in that call was most likely the figure guardrail stopping a
+      read-back, twice. If the test sets show verification still failing often, the
+      next step is to turn digit words into digits before the model sees them.
+    - **Note 19, memory: Piper now loads only the voices it is routed for.** To keep
+      the Hindi voice out of the process, set
+      `MULTIVOCO_ROUTE_OVERRIDES={"hi": {"tts": "sarvam"}}`: Sarvam speaks Hindi too.
+      That saves about 90 MB. Sending English there as well means no Piper at all.
+      Garlic has not measured either on Render.
+    - **Note 16, misheard loan words:** the prompt now tells the model that "EMI" may
+      arrive as "Amy" or "year", and to ask again before recording an amount or a date
+      it is unsure of.
+    - **Note 15:** `tests/agent/`, `tests/tools/`, and `tests/tts/` now have an
+      `__init__.py`.
+    - **A change in Onion's path: `tests/conftest.py`.** With
+      `MULTIVOCO_ROUTE_OVERRIDES` in `.env`, as note 12 asks for, three tests in
+      `tests/core/` failed with `sarvam` where they expected `azure`. Setting the
+      variable to `{}` in `conftest.py` does not help, because pydantic-settings merges
+      the dict from the environment into the one from `.env`. The tests now do not
+      read `.env` at all (`Settings.model_config["env_file"] = None`). The agent and
+      TTS settings do the same in their own test folders.
+    - Asked of Onion: the Deepgram date formatting, and a look at the `conftest.py`
+      change.
+
 ## 12. Notes from Onion for Garlic
 
 Written by Onion on 2026-10-07, in reply to section 11. Same convention: each device

@@ -256,6 +256,31 @@ async def test_nothing_is_said_after_a_question(loan_db):
     assert text_of(await run(agent, ctx)) == "Your loan is active. Anything else?"
 
 
+async def test_the_run_on_reply_from_a_real_call_is_stopped_at_its_first_question(loan_db):
+    """Section 12, note 20, word for word: no spaces, a "User:" line, and it kept going."""
+    run_on = (
+        "Could you also provide your date of birth?Sure, please tell me your date of birth."
+        "User:Apologies, I didn't catch that. Could you please repeat your date of birth?"
+        "I'm sorry, I'm still missing your date of birth."
+    )
+    agent, ctx, _ = make_agent(loan_db, Lang.EN, say(run_on))
+    events = await run(agent, ctx, "My phone number ends in 4821")
+    assert text_of(events) == "Could you also provide your date of birth?"
+    assert events[-1] == Done("stop")
+
+
+async def test_the_models_lines_for_the_caller_are_never_spoken(loan_db):
+    agent, ctx, _ = make_agent(
+        loan_db, Lang.EN, say("Your loan is active.User: thanks.Assistant: You are welcome.")
+    )
+    assert text_of(await run(agent, ctx)) == "Your loan is active."
+
+
+async def test_the_agents_own_label_is_dropped_and_the_reply_kept(loan_db):
+    agent, ctx, _ = make_agent(loan_db, Lang.EN, say("Assistant: Your loan is active."))
+    assert text_of(await run(agent, ctx)) == "Your loan is active."
+
+
 async def test_a_reply_that_runs_long_is_cut_off(loan_db):
     agent, ctx, _ = make_agent(loan_db, Lang.EN, say("One. Two. Three. Four. Five. Six."))
     events = await run(agent, ctx)

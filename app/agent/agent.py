@@ -19,6 +19,8 @@ from app.agent.guardrails import (
     SentenceBuffer,
     identity_details_not_given,
     plain_spaces,
+    starts_other_speaker,
+    without_own_label,
     wrong_language,
 )
 from app.agent.lines import GREETINGS, HANDOFF_LINE, NEUTRAL_GREETING, SAFE_REPLY
@@ -193,6 +195,13 @@ class LoanAgent:
 
         Either way it may mark the attempt complete, which stops the model's stream.
         """
+        if starts_other_speaker(sentence):
+            # The model has started writing the caller's lines. Nothing after this is ours.
+            attempt.complete = True
+            return None
+        sentence = without_own_label(sentence)
+        if not sentence.strip():
+            return None
         if figures := self._ledger.unsupported(sentence):
             attempt.complete = True
             attempt.rejected = (

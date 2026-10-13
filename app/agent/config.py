@@ -16,9 +16,12 @@ class AgentSettings(BaseSettings):
     # gemini-3.8-flash timed out or returned 503 and 429, and gemini-3.5-flash took 3 to
     # 7 s to start, so the lite model is the backup.
     groq_model: str = "openai/gpt-oss-120b"
-    # Used when the first Groq model is over its limit: the free tier allows 8000 tokens
-    # a minute per model, and one agent request costs about 900. Empty turns it off.
-    groq_backup_model: str = "openai/gpt-oss-20b"
+    # A second Groq model for when the first is over its limit: the free tier allows 8000
+    # tokens a minute per model, and one agent request costs about 900.
+    # Off by default. `openai/gpt-oss-20b` was tried here and is not safe in front of a
+    # caller: in a real call it wrote the caller's lines as well as its own (section 12,
+    # note 20). With this empty, a rate-limited Groq falls through to Gemini.
+    groq_backup_model: str = ""
     gemini_model: str = "gemini-3.5-flash-lite"
 
     # Both default models think before answering. Low keeps time to first token short.

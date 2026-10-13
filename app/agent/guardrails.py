@@ -151,15 +151,47 @@ def plain_spaces(text: str) -> str:
     return _ODD_HYPHENS.sub("-", _ODD_SPACES.sub(" ", text))
 
 
+# Seen in a real call: the backup model wrote "User:" lines and answered them itself,
+# and all of it was spoken. A label for the other side means the model has left its own
+# turn. A label for its own side is only a prefix.
+_OTHER_SPEAKER = re.compile(r"\s*(user|caller|customer|human|borrower)\s*:", re.IGNORECASE)
+_OWN_LABEL = re.compile(r"^\s*(assistant|agent|ai|bot)\s*:\s*", re.IGNORECASE)
+
+
+def starts_other_speaker(sentence: str) -> bool:
+    return _OTHER_SPEAKER.match(sentence) is not None
+
+
+def without_own_label(sentence: str) -> str:
+    return _OWN_LABEL.sub("", sentence, count=1)
+
+
 _TERMINATORS = "".join(sorted({ch for info in LANGUAGES.values() for ch in info.terminators}))
-_BOUNDARY = re.compile(rf"[{re.escape(_TERMINATORS)}]+[\"')\]]*\s+")
+_ENDING = re.compile(rf"([{re.escape(_TERMINATORS)}]+)[\"')\]]*")
+
+
+def _starts_sentence(terminator: str, following: str) -> bool:
+    """Does `following`, coming straight after `terminator`, begin a new sentence?
+
+    The same rule as the orchestrator's splitter (app/pipeline/splitter.py). Seen live:
+    the model writes "...2026.Is there anything else?" with no space. A letter straight
+    after "?", "!" or a danda starts a sentence, and so does a capital or a non-Latin
+    letter straight after a full stop. A digit or a small Latin letter after a full stop
+    does not, which keeps 8450.50 and example.com whole.
+    """
+    if not following.isalpha():
+        return False
+    if terminator != ".":
+        return True
+    return following.isupper() or not following.isascii()
 
 
 class SentenceBuffer:
     """Cuts streamed text into sentences, so each can be checked whole before release.
 
-    A terminator only ends a sentence when whitespace follows, which keeps decimals
-    such as 8450.50 in one piece.
+    A sentence ends at a terminator followed by whitespace, or by the start of the next
+    sentence with no space at all. The last character is never judged until the next
+    one has arrived.
     """
 
     def __init__(self) -> None:
@@ -168,9 +200,20 @@ class SentenceBuffer:
     def feed(self, text: str) -> list[str]:
         self._buffer += text
         sentences = []
-        while match := _BOUNDARY.search(self._buffer):
-            sentences.append(self._buffer[: match.end()])
-            self._buffer = self._buffer[match.end() :]
+        position = 0
+        while match := _ENDING.search(self._buffer, position):
+            end = match.end()
+            if end == len(self._buffer):
+                break  # what follows has not arrived yet
+            if self._buffer[end].isspace():
+                while end < len(self._buffer) and self._buffer[end].isspace():
+                    end += 1
+            elif not _starts_sentence(match.group(1)[-1], self._buffer[end]):
+                position = end
+                continue
+            sentences.append(self._buffer[:end])
+            self._buffer = self._buffer[end:]
+            position = 0
         return sentences
 
     def flush(self) -> str:

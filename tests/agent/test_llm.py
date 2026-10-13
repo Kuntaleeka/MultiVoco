@@ -6,7 +6,7 @@ import httpx2 as httpx
 import pytest
 
 from app.agent import llm as llm_module
-from app.agent.config import AgentSettings
+from app.agent.config import AgentSettings, get_agent_settings
 from app.agent.llm import GEMINI, GROQ, FallbackLLM, OpenAICompatLLM, build_llm
 from app.core import registry
 from app.core.interfaces import (
@@ -266,17 +266,29 @@ def test_the_registry_routes_every_language_to_groq_with_gemini_behind_it(keys):
     for lang in Lang:
         llm = registry.get_llm(lang)
         assert isinstance(llm, FallbackLLM)
-        # Two Groq models, each with its own rate limit, then Gemini.
-        assert [p.name for p in llm.providers] == [GROQ, GROQ, GEMINI]
-        assert llm.providers[0].model != llm.providers[1].model
+        assert [p.name for p in llm.providers] == [GROQ, GEMINI]
     assert registry.get_llm(Lang.EN) is registry.get_llm(Lang.KN)  # one shared instance
 
 
 def test_one_key_means_only_that_provider(keys):
     keys(GROQ="g")
-    assert [p.name for p in registry.get_llm(Lang.EN).providers] == [GROQ, GROQ]
+    assert registry.get_llm(Lang.EN).name == GROQ
     keys(GEMINI="m")
     assert build_llm(GEMINI).name == GEMINI
+
+
+def test_a_second_groq_model_can_be_put_before_gemini(keys, monkeypatch):
+    """Each Groq model has its own rate limit. Off by default: see note 20 in the plan."""
+    monkeypatch.setenv("MULTIVOCO_GROQ_BACKUP_MODEL", "some/other-model")
+    get_agent_settings.cache_clear()
+    keys(GROQ="g", GEMINI="m")
+    try:
+        llm = registry.get_llm(Lang.EN)
+        assert [(p.name, p.model) for p in llm.providers][1] == (GROQ, "some/other-model")
+        assert [p.name for p in llm.providers] == [GROQ, GROQ, GEMINI]
+    finally:
+        monkeypatch.undo()
+        get_agent_settings.cache_clear()
 
 
 async def test_a_chain_moves_on_until_one_provider_answers():

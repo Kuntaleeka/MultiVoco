@@ -169,6 +169,14 @@ async def test_warm_up_loads_what_it_can_and_never_raises(voices):
     assert voice.texts == ["Hello."]
 
 
+async def test_warm_up_skips_a_language_routed_to_another_provider(voices, settings_env):
+    """Each loaded voice costs memory, so a voice nobody is routed to stays unloaded."""
+    settings_env(ROUTE_OVERRIDES='{"hi": {"tts": "sarvam"}}')
+    tts, _, loaded = make_tts(voices)
+    await tts.warm_up()
+    assert [model.name for model in loaded] == ["en-test.onnx"]
+
+
 def test_the_registry_hands_out_one_shared_piper_for_english_and_hindi(settings_env):
     settings_env(MOCK="vad,stt,langid,llm,agent,trace_sink")
     assert registry.get_tts(Lang.EN) is registry.get_tts(Lang.HI) is app.tts.piper()

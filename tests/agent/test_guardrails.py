@@ -3,7 +3,14 @@ from decimal import Decimal
 
 import pytest
 
-from app.agent.guardrails import FigureLedger, SentenceBuffer, numbers_in, wrong_language
+from app.agent.guardrails import (
+    FigureLedger,
+    SentenceBuffer,
+    numbers_in,
+    starts_other_speaker,
+    without_own_label,
+    wrong_language,
+)
 from app.agent.lines import GREETINGS, HANDOFF_LINE, SAFE_REPLY
 from app.core.languages import Lang
 
@@ -95,6 +102,45 @@ def test_wrong_language_is_judged_by_script(text, lang, wrong):
 def test_fixed_lines_pass_the_guardrails_they_stand_in_for(lines, lang):
     assert FigureLedger().unsupported(lines[lang]) == []
     assert not wrong_language(lines[lang], lang)
+
+
+@pytest.mark.parametrize(
+    ("text", "sentences"),
+    [
+        # Seen in a real call: no space after the sentence.
+        (
+            "It is due on 23 October 2026.Is there anything else?Yes.",
+            ["It is due on 23 October 2026.", "Is there anything else?", "Yes."],
+        ),
+        ("आपकी EMI देय है।क्या आप भुगतान करेंगे?", ["आपकी EMI देय है।", "क्या आप भुगतान करेंगे?"]),
+        ("ಬಾಕಿ ಇದೆ.ಇನ್ನೇನು ಬೇಕು?", ["ಬಾಕಿ ಇದೆ.", "ಇನ್ನೇನು ಬೇಕು?"]),
+        ("Pay 8450.50 at example.com today.", ["Pay 8450.50 at example.com today."]),
+        ("Really?yes, really.", ["Really?", "yes, really."]),
+    ],
+)
+def test_sentences_are_cut_even_when_the_model_leaves_out_the_space(text, sentences):
+    buffer = SentenceBuffer()
+    out = []
+    for ch in text:  # one character at a time, the hardest way for it to arrive
+        out.extend(buffer.feed(ch))
+    out.append(buffer.flush())
+    assert out == sentences
+
+
+@pytest.mark.parametrize("line", ["User: yes", "user:Apologies", " Caller : ok", "Customer: hm"])
+def test_a_line_for_the_other_speaker_is_recognised(line):
+    assert starts_other_speaker(line)
+
+
+@pytest.mark.parametrize("line", ["Your user ID is ready.", "Users: none.", "The caller said so."])
+def test_ordinary_sentences_are_not_taken_for_speaker_labels(line):
+    assert not starts_other_speaker(line)
+
+
+def test_the_agents_own_label_is_only_a_prefix():
+    assert without_own_label("Assistant: Sure, one moment.") == "Sure, one moment."
+    assert without_own_label("Agent:Sure.") == "Sure."
+    assert without_own_label("An agent: no.") == "An agent: no."
 
 
 def test_sentences_are_cut_only_at_real_boundaries():

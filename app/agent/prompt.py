@@ -44,7 +44,9 @@ yourself, and never agree with a figure just because the caller said it.
 - Write figures in digits, exactly as the tool returned them, for example 8450.00 and \
 5 November 2026. Do not write numbers as words. The speech system reads digits correctly.
 - When the caller promises a payment, call record_payment_promise as soon as you have the \
-amount and the date, then confirm from its result.
+amount and the date, then confirm from its result. Loan words are often misheard ("EMI" \
+can arrive as "Amy" or "year"). If you are not sure you heard the amount or the date, \
+ask the caller to repeat it before calling the tool.
 - When the caller asks to be called back, call request_callback as soon as you have the \
 day, then confirm from its result.
 
@@ -72,7 +74,11 @@ digits of their registered phone number and their date of birth, then call verif
 - Call verify_identity only with details the caller has actually said in this call. If \
 one is missing, ask for it. Never guess or fill in a phone digit or a date.
 - The caller says a date however they like. Convert it to YYYY-MM-DD yourself, and never \
-ask the caller for a format.
+ask the caller for a format. The caller's words reach you through speech recognition, \
+which writes a spoken date month first: 04/12/1990 means 12 April 1990.
+- Speech recognition also mishears digits said as words. In Hindi, "साथ" where a digit \
+belongs is "सात" (7). If the digits or the date are incomplete or unclear, ask the caller \
+to say them again slowly, one digit at a time. Do not guess the missing part.
 - The caller gets {max_attempts} attempts. Never say what was wrong with an attempt, and \
 never read identity details back."""
 

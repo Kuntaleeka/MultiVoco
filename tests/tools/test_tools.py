@@ -85,12 +85,20 @@ async def test_verification_sets_the_customer_on_the_call(tools, ctx):
         {"phone_last4": "४८२१", "dob": "१९९०-०४-१२"},  # Devanagari numerals
         {"phone_last4": "೪೮೨೧", "dob": "೧೯೯೦-೦೪-೧೨"},  # Kannada numerals
         {"phone_last4": "৪৮২১", "dob": "১৯৯০-০৪-১২"},  # Bengali numerals
-        {"phone_last4": "48 21", "dob": "12/04/1990"},  # spaced digits, day first
+        {"phone_last4": "48 21", "dob": " 1990-04-12 "},  # spaced digits
     ],
 )
 async def test_verification_reads_digits_from_every_language(tools, ctx, args):
     assert (await tools["verify_identity"].run(args, ctx))["verified"] is True
     assert ctx.verified_customer_id == ASHA_ID
+
+
+@pytest.mark.parametrize("dob", ["04/12/1990", "12/04/1990", "12 April 1990"])
+async def test_a_date_that_is_not_iso_is_refused_not_guessed_at(tools, ctx, dob):
+    """Speech recognition writes dates month first, so a slashed date cannot be trusted."""
+    result = await tools["verify_identity"].run({"phone_last4": "4821", "dob": dob}, ctx)
+    assert result["error"] == "invalid_arguments"
+    assert ctx.failed_verifications == 0
 
 
 async def test_right_phone_with_wrong_dob_does_not_verify(tools, ctx):

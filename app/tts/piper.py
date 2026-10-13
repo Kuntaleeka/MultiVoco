@@ -13,7 +13,7 @@ from pathlib import Path
 from typing import Any
 
 from app.core.interfaces import ProviderError
-from app.core.languages import Lang
+from app.core.languages import Lang, route_for
 from app.core.pools import iter_blocking, run_blocking
 from app.tts.config import TTSSettings, get_tts_settings
 from app.tts.normalize import normalize
@@ -135,8 +135,14 @@ class PiperTTS:
             raise ProviderError(f"piper: synthesis failed: {error}") from error
 
     async def warm_up(self) -> None:
-        """Load every voice and synthesise once, so the first caller does not pay for it."""
+        """Load each voice in use and synthesise once, so the first caller does not wait.
+
+        Only languages routed to Piper are loaded. Each voice costs memory, so routing
+        Hindi elsewhere (MULTIVOCO_ROUTE_OVERRIDES) keeps its voice out of the process.
+        """
         for language in self._names:
+            if route_for(language).tts != "piper":
+                continue
             try:
                 await run_blocking(self.load, language)
                 async for _ in self.synthesize(WARM_UP_TEXT[language], language):
